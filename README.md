@@ -2,9 +2,11 @@
 
 本仓库保存本项目实际编写的修改工具与增强功能源码，**不是 Widgetify 原厂完整源码**。原厂 Swift/SwiftUI/AppKit 程序、第三方库及资源仍是编译后的成品，没有被恢复成完整可编辑工程。
 
-当前版本：**v0.2.1**。安装包见 [Releases](https://github.com/userSywang/Widgetify/releases)。
+当前版本：**v0.2.2**。安装包见 [Releases](https://github.com/userSywang/Widgetify/releases)。
 
 ## 当前功能
+
+升级后首次启动会直接打开喝水提醒设置。顶部 **W+** 菜单可再次打开“喝水提醒设置”和“文件夹集中管理”。原应用菜单被重建时，增强入口会自动修复。
 
 - 菜单“Widgetify → 文件夹集中管理”：集中保存原文件夹入口。桌面文件夹仅隐藏图标，其他目录不改动；支持恢复显示、移除管理和放到桌面。
 - 菜单“Widgetify → 增强设置…”：配置每日多个喝水提醒时间点、开关和测试通知。首次使用需允许系统通知。
@@ -17,13 +19,13 @@
 
 ## 本地构建
 
-需要 macOS、Xcode 命令行工具、Python 3，以及单独安装的原版 Widgetify 4.55（216）。基础程序不放入源码仓库。
+需要 macOS、Xcode 命令行工具、Python 3，以及原版 Widgetify 4.55（216）或校验通过的本项目定制版。基础程序不放入源码仓库。
 
 ```sh
-python3 scripts/build.py --base-app /Applications/Widgetify.app --output dist
+python3 scripts/build.py --base-app "/Applications/Widgetify 0.2.2.app" --output dist
 ```
 
-构建脚本校验基础程序版本与 SHA-256，在独立输出目录制作副本，不覆盖基础程序。已安装的是定制版时，请使用另行保留的原始安装来源作为构建输入。
+构建脚本校验原版 SHA-256，或校验定制版的原始程序代码指纹，在独立输出目录制作副本，不覆盖基础程序。
 
 ## 源码范围
 

@@ -5,6 +5,13 @@ import struct
 from pathlib import Path
 
 SUPPORTED_SHA256 = '1d4ba54b569dd438067da190a18ce6eff9a8a5f71599f4c6d7248fbfee6948e0'
+SUPPORTED_PATCHED_TEXT_SHA256 = 'a659510443ec2b362d18838d8fa7b524417cd4c7e4d36ddc1352cc284542d2d9'
+
+def validate_custom_base(executable):
+    data = Path(executable).read_bytes()
+    arm, size = arm64_slice(data)
+    if size < 0xac22c8 or hashlib.sha256(data[arm+0x2fe0:arm+0xac22c8]).hexdigest() != SUPPORTED_PATCHED_TEXT_SHA256:
+        raise ValueError('The customized base executable does not match the supported Widgetify 4.55 code family')
 
 def arm64_slice(data):
     magic, count = struct.unpack_from('>II', data)

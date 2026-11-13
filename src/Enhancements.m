@@ -42,22 +42,39 @@ static void Message(NSString *title,NSString *detail) {NSAlert *alert=[NSAlert n
 @property NSMutableDictionary<NSString *,NSURL *> *activeURLs;
 @property id<UNUserNotificationCenterDelegate> previousDelegate;
 @property BOOL installing;
+@property BOOL initialized;
+@property NSStatusItem *statusItem;
 + (instancetype)shared;
 @end
 
 @implementation WidgetifyEnhancements
 + (instancetype)shared {static WidgetifyEnhancements *s;static dispatch_once_t once;dispatch_once(&once,^{s=[self new];s.folders=[NSMutableArray array];s.activeURLs=[NSMutableDictionary dictionary];});return s;}
 - (void)install {
-    if(!NSApp.mainMenu.numberOfItems)return;
-    NSMenu *menu=[NSApp.mainMenu itemAtIndex:0].submenu;
+    if(!NSApp.isRunning)return;
+    if(!self.initialized){
+        self.initialized=YES;
+        self.statusItem=[NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
+        self.statusItem.button.title=@"W+";
+        self.statusItem.button.toolTip=[@"Widgetify 增强功能 " stringByAppendingString:CurrentVersion()];
+        NSMenu *quickMenu=[NSMenu new];
+        NSMenuItem *versionItem=[[NSMenuItem alloc]initWithTitle:[@"Widgetify " stringByAppendingString:CurrentVersion()] action:nil keyEquivalent:@""];versionItem.enabled=NO;[quickMenu addItem:versionItem];
+        NSMenuItem *water=[[NSMenuItem alloc]initWithTitle:@"喝水提醒设置…" action:@selector(showSettings:) keyEquivalent:@""];water.target=self;[quickMenu addItem:water];
+        NSMenuItem *folder=[[NSMenuItem alloc]initWithTitle:@"文件夹集中管理…" action:@selector(showFolders:) keyEquivalent:@""];folder.target=self;[quickMenu addItem:folder];
+        self.statusItem.menu=quickMenu;
+        [self loadFolders];
+        UNUserNotificationCenter *center=[UNUserNotificationCenter currentNotificationCenter];self.previousDelegate=center.delegate;center.delegate=self;
+        [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings){if(settings.authorizationStatus==UNAuthorizationStatusAuthorized && [[NSUserDefaults standardUserDefaults]boolForKey:EnabledKey])dispatch_async(dispatch_get_main_queue(),^{[self reschedule];});}];
+        if(self.folders.count){[self showFolders:nil];[self dockFolders:nil];}
+        NSString *welcomeKey=@"custom.enhancements.welcomed.version";
+        if(![[NSUserDefaults.standardUserDefaults stringForKey:welcomeKey]isEqualToString:CurrentVersion()]){
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{[self showSettings:nil];[NSUserDefaults.standardUserDefaults setObject:CurrentVersion() forKey:welcomeKey];});
+        }
+    }
+    NSMenu *menu=NSApp.mainMenu.numberOfItems?[NSApp.mainMenu itemAtIndex:0].submenu:nil;
     if(!menu || [menu itemWithTag:90731])return;
     NSMenuItem *item=[[NSMenuItem alloc]initWithTitle:@"增强设置…" action:@selector(showSettings:) keyEquivalent:@""];item.target=self;item.tag=90731;
     [menu insertItem:[NSMenuItem separatorItem] atIndex:MIN(2,menu.numberOfItems)];[menu insertItem:item atIndex:MIN(3,menu.numberOfItems)];
     NSMenuItem *folders=[[NSMenuItem alloc]initWithTitle:@"文件夹集中管理" action:@selector(showFolders:) keyEquivalent:@""];folders.target=self;[menu insertItem:folders atIndex:MIN(4,menu.numberOfItems)];
-    [self loadFolders];
-    UNUserNotificationCenter *center=[UNUserNotificationCenter currentNotificationCenter];self.previousDelegate=center.delegate;center.delegate=self;
-    [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings){if(settings.authorizationStatus==UNAuthorizationStatusAuthorized && [[NSUserDefaults standardUserDefaults]boolForKey:EnabledKey])dispatch_async(dispatch_get_main_queue(),^{[self reschedule];});}];
-    if(self.folders.count){[self showFolders:nil];[self dockFolders:nil];}
 }
 - (NSTextField *)label:(NSString *)text frame:(NSRect)frame font:(CGFloat)size {
     NSTextField *label=[NSTextField wrappingLabelWithString:text];label.frame=frame;label.font=[NSFont systemFontOfSize:size];return label;
@@ -71,7 +88,7 @@ static void Message(NSString *title,NSString *detail) {NSAlert *alert=[NSAlert n
         self.settingsWindow=[[NSWindow alloc]initWithContentRect:rect styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
         self.settingsWindow.title=[NSString stringWithFormat:@"Widgetify %@ · 增强设置",CurrentVersion()];self.settingsWindow.releasedWhenClosed=NO;
         NSView *v=self.settingsWindow.contentView;
-        [v addSubview:[self label:@"喝水定时提醒" frame:NSMakeRect(24,384,520,30) font:21]];
+        [v addSubview:[self label:@"喝水定时提醒 · 顶部 W+ 可再次打开" frame:NSMakeRect(24,384,520,30) font:20]];
         self.enabled=[NSButton checkboxWithTitle:@"开启每日喝水提醒" target:nil action:nil];self.enabled.frame=NSMakeRect(24,348,500,28);[v addSubview:self.enabled];
         [v addSubview:[self label:@"每天的提醒时间（24 小时制，用逗号分隔）" frame:NSMakeRect(24,304,520,28) font:13]];
         self.timesField=[[NSTextField alloc]initWithFrame:NSMakeRect(24,269,520,30)];self.timesField.placeholderString=@"09:30, 11:00, 14:00, 16:00";[v addSubview:self.timesField];
@@ -232,7 +249,9 @@ static void Message(NSString *title,NSString *detail) {NSAlert *alert=[NSAlert n
 
 #ifndef ENHANCEMENTS_TEST
 __attribute__((constructor))static void LoadEnhancements(void){dispatch_async(dispatch_get_main_queue(),^{
-    [NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer){if(NSApp.mainMenu.numberOfItems){[[WidgetifyEnhancements shared]install];[timer invalidate];}}];
+    // Original SwiftUI/AppKit menus can be replaced after launch. Keep the
+    // application-menu entries repaired; initialization itself runs once.
+    [NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer){[[WidgetifyEnhancements shared]install];}];
 });}
 #else
 int main(void){@autoreleasepool {

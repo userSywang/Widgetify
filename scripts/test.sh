@@ -7,4 +7,4 @@ xcrun clang -arch arm64 -mmacosx-version-min=12.0 -fobjc-arc -fblocks \
   -DENHANCEMENTS_TEST -framework AppKit -framework UserNotifications -framework CoreGraphics \
   "$PROJECT_ROOT/src/Enhancements.m" -o "$TEST_DIR/check-enhancements"
 "$TEST_DIR/check-enhancements"
-python3 -m py_compile "$PROJECT_ROOT/scripts/build.py" "$PROJECT_ROOT/scripts/patch_binary.py"
+python3 -m py_compile "$PROJECT_ROOT/scripts/build.py" "$PROJECT_ROOT/scripts/patch_binary.py" "$PROJECT_ROOT/scripts/release.py"

@@ -9,6 +9,8 @@ static NSString *const TimeKey=@"custom.enhancements.water.times";
 static NSString *const EnabledKey=@"custom.enhancements.water.enabled";
 static NSString *const NoticePrefix=@"custom.water.daily.";
 
+static NSString *CurrentVersion(void) {return [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]?:@"dev";}
+
 static NSArray<NSString *> *ParseTimes(NSString *text, NSString **error) {
     NSCharacterSet *separators=[NSCharacterSet characterSetWithCharactersInString:@",，、;；\n \t"];
     NSMutableSet *unique=[NSMutableSet set];
@@ -67,7 +69,7 @@ static void Message(NSString *title,NSString *detail) {NSAlert *alert=[NSAlert n
     if(!self.settingsWindow){
         NSRect rect=NSMakeRect(0,0,570,440);
         self.settingsWindow=[[NSWindow alloc]initWithContentRect:rect styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
-        self.settingsWindow.title=@"Widgetify 0.2.0 · 增强设置";self.settingsWindow.releasedWhenClosed=NO;
+        self.settingsWindow.title=[NSString stringWithFormat:@"Widgetify %@ · 增强设置",CurrentVersion()];self.settingsWindow.releasedWhenClosed=NO;
         NSView *v=self.settingsWindow.contentView;
         [v addSubview:[self label:@"喝水定时提醒" frame:NSMakeRect(24,384,520,30) font:21]];
         self.enabled=[NSButton checkboxWithTitle:@"开启每日喝水提醒" target:nil action:nil];self.enabled.frame=NSMakeRect(24,348,500,28);[v addSubview:self.enabled];
@@ -152,7 +154,7 @@ static void Message(NSString *title,NSString *detail) {NSAlert *alert=[NSAlert n
 - (void)showFolders:(id)sender {
     if(!self.folderWindow){
         self.folderWindow=[[NSPanel alloc]initWithContentRect:NSMakeRect(0,0,620,350) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable|NSWindowStyleMaskUtilityWindow backing:NSBackingStoreBuffered defer:NO];
-        self.folderWindow.title=@"文件夹集中管理 · 0.2.0";self.folderWindow.releasedWhenClosed=NO;self.folderWindow.hidesOnDeactivate=NO;self.folderWindow.minSize=NSMakeSize(570,300);
+        self.folderWindow.title=[NSString stringWithFormat:@"文件夹集中管理 · %@",CurrentVersion()];self.folderWindow.releasedWhenClosed=NO;self.folderWindow.hidesOnDeactivate=NO;self.folderWindow.minSize=NSMakeSize(570,300);
         self.folderWindow.collectionBehavior=NSWindowCollectionBehaviorCanJoinAllSpaces|NSWindowCollectionBehaviorStationary|NSWindowCollectionBehaviorIgnoresCycle;
         NSView *v=self.folderWindow.contentView;
         NSTextField *hint=[self label:@"双击打开原文件夹。桌面来源自动隐藏图标；其他来源不改动。" frame:NSMakeRect(16,306,585,27) font:12];hint.autoresizingMask=NSViewWidthSizable|NSViewMinYMargin;[v addSubview:hint];

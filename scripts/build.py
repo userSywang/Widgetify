@@ -43,7 +43,7 @@ def main():
     run('ditto', args.base_app, app)
     changes = patch(app/'Contents/MacOS/Widgetify')
     info = base_info.copy()
-    info.update(CFBundleIdentifier='local.widgetify.custom', CFBundleName='Widgetify', CFBundleDisplayName='Widgetify '+version, CFBundleShortVersionString=version, CFBundleVersion='20261113.'+version.split('.')[1])
+    info.update(CFBundleIdentifier='local.widgetify.custom', CFBundleName='Widgetify', CFBundleDisplayName='Widgetify '+version, CFBundleShortVersionString=version, CFBundleVersion='216.'+'.'.join(version.split('.')[1:]))
     (app/'Contents/Info.plist').write_bytes(plistlib.dumps(info))
     result = subprocess.run(['codesign', '-d', '--entitlements', ':-', str(args.base_app)], check=True, capture_output=True)
     entitlements = plistlib.loads(result.stdout)

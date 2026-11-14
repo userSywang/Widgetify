@@ -54,7 +54,7 @@ def main():
     changelog = (ROOT/'CHANGELOG.md').read_text()
     section = changelog.split('## '+tag+' — ',1)[1].split('\n',1)[1].split('\n## ',1)[0].strip()
     notes = artifacts/'release-notes.md'
-    notes.write_text(section+'\n\n下载 `'+installer.name+'`，解压得到 Widgetify.app。首次使用喝水提醒需允许系统通知。\n\n本仓库保存实际编写的增强源码与修改工具，不是原厂完整源码。仅支持 Apple 芯片；Apple 天气等开发者授权限制仍存在。\n')
+    notes.write_text(section+'\n\n下载 `'+installer.name+'`，解压得到 Widgetify.app。喝水测试直接显示应用弹窗；每日弹窗需要软件保持运行。\n\n本仓库保存实际编写的增强源码与修改工具，不是原厂完整源码。仅支持 Apple 芯片；Apple 天气等开发者授权限制仍存在。\n')
     run('git','push','origin','HEAD:main',retry=True)
     existing_tag = subprocess.run(['git','rev-parse','--verify','refs/tags/'+tag],cwd=ROOT,capture_output=True,text=True)
     if existing_tag.returncode == 0:

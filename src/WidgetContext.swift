@@ -26,6 +26,16 @@ private func scalar<T>(_ value: Any?, as: T.Type, depth: Int = 0) -> T? {
     }
     return nil
 }
+private func reflectedController(_ value: Any, depth: Int = 0, budget: inout Int) -> Any? {
+    guard depth < 8, budget > 0 else { return nil }; budget -= 1
+    let mirror = Mirror(reflecting: value), name = String(reflecting: Swift.type(of: value))
+    if mirror.displayStyle == .class && [".WaterController", ".DocumentController", ".DisplayController"].contains(where: { name.hasSuffix($0) }) { return value }
+    guard mirror.displayStyle != .collection && mirror.displayStyle != .dictionary else { return nil }
+    for child in mirror.children where child.label != "widget" {
+        if let result = reflectedController(child.value, depth: depth + 1, budget: &budget) { return result }
+    }
+    return nil
+}
 private func hosting(_ view: NSView) -> NSView? {
     let type = String(reflecting: Swift.type(of: view))
     if type.contains("NSHostingView") && type.contains("GenericWidgetifyView") { return view }
@@ -44,7 +54,9 @@ private func hosting(_ view: NSView) -> NSView? {
         if let model = field(root, "widget"), let id = field(model, "id") as? String,
            id.range(of: "^[a-f0-9]{32}$", options: .regularExpression) != nil {
             var result: [String: Any] = ["id": id, "kind": kind]
-            if let window = view.window, let controller = unwrap(field(window, "currentDisplayController")) {
+            var budget = 100
+            let controller = view.window.flatMap { unwrap(field($0, "currentDisplayController")) } ?? reflectedController(root, budget: &budget)
+            if let controller {
                 for (key, property) in [("accent", "_acColor"), ("base", "_baseColor"), ("background", "_backgroundColor")] {
                     if let color: Color = scalar(field(controller, property), as: Color.self) { result[key] = NSColor(color) }
                 }

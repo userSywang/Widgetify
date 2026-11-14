@@ -1,5 +1,7 @@
 #import <AppKit/AppKit.h>
 #import <UserNotifications/UserNotifications.h>
+#import <QuartzCore/QuartzCore.h>
+extern void *WidgetifyCreateWaterReminder(void *,void *,void *,void *);
 #import "OriginalFolderBridge.h"
 #import "ComponentIntegration.h"
 #import "ComponentSettings.h"
@@ -14,7 +16,7 @@ static NSString *const FiredKey=@"custom.enhancements.water.deliveredSlots";
 @property BOOL preview;
 @end
 @implementation ReminderPanel
-- (BOOL)canBecomeKeyWindow{return self.preview;}
+- (BOOL)canBecomeKeyWindow{return YES;}
 - (BOOL)canBecomeMainWindow{return NO;}
 @end
 @interface WidgetifyEnhancements:NSObject<ComponentSettingsDelegate>
@@ -60,14 +62,18 @@ static NSString *const FiredKey=@"custom.enhancements.water.deliveredSlots";
         for(NSString*i in [self.contexts.allKeys copy])if(![alive containsObject:i]){[self.contexts removeObjectForKey:i];[self.windows removeObjectForKey:i];}
         [self folderOptionsChanged];self.lastScan=now;
     }
-    NSMutableSet *shownTimes=[NSMutableSet new];
+    BOOL presented=NO;
     for(NSString*i in [[self.contexts allKeys]sortedArrayUsingSelector:@selector(compare:)]){
-        NSDictionary*c=self.contexts[i];if(![c[@"kind"]isEqual:@"water"])continue;NSDictionary*config=WidgetifyWaterConfiguration(i);if(![config[@"enabled"]boolValue])continue;
-        for(NSString*time in WidgetifyDueTimes(self.lastCheck,now,WidgetifyParseTimes(config[@"times"],NULL))){
-            NSString*slot=[i stringByAppendingFormat:@"/%@",WidgetifySlotKey(now,time)];if([self.fired containsObject:slot])continue;
-            [self.fired addObject:slot];while(self.fired.count>128)[self.fired removeObjectAtIndex:0];[NSUserDefaults.standardUserDefaults setObject:self.fired.array forKey:FiredKey];
-            if(![shownTimes containsObject:time]){[shownTimes addObject:time];[self present:config context:c window:[self.windows objectForKey:i] preview:NO];}
-        }
+        NSDictionary*c=self.contexts[i];if(![c[@"kind"]isEqual:@"water"])continue;
+        NSDictionary*config=WidgetifyWaterConfiguration(i);if(![config[@"enabled"]boolValue])continue;
+        NSTimeInterval stamp=[config[@"nextReminderAt"]doubleValue];
+        NSDate *next=stamp>0?[NSDate dateWithTimeIntervalSince1970:stamp]:nil;
+        if(next && [next compare:now]==NSOrderedDescending && [now compare:self.lastCheck]!=NSOrderedAscending)continue;
+        BOOL due=WidgetifyIntervalIsDue(self.lastCheck,now,next);
+        NSMutableDictionary *updated=[config mutableCopy];
+        updated[@"nextReminderAt"]=@([now timeIntervalSince1970]+MAX(1,MIN(240,[config[@"intervalMinutes"]integerValue]))*60);
+        [NSUserDefaults.standardUserDefaults setObject:updated forKey:WidgetifyWaterKey(i)];
+        if(due && !presented){presented=YES;updated[@"lastReminderAt"]=@(now.timeIntervalSince1970);[NSUserDefaults.standardUserDefaults setObject:updated forKey:WidgetifyWaterKey(i)];[self present:updated context:c window:[self.windows objectForKey:i] preview:NO];}
     }
     self.lastCheck=now;
     // Optional navigation only: it opens/focuses the actual component, never an
@@ -91,30 +97,46 @@ static NSString *const FiredKey=@"custom.enhancements.water.deliveredSlots";
 }
 - (void)present:(NSDictionary*)config context:(NSDictionary*)context window:(NSWindow*)source preview:(BOOL)preview{
     [self dismiss:nil];self.activeConfig=config;self.activeContext=context;self.activeSource=source;
-    BOOL compact=[config[@"style"]integerValue]==1;CGFloat width=compact?370:316,height=compact?94:186;
+    BOOL compact=[config[@"style"]integerValue]==1;CGFloat width=compact?366:340,height=compact?116:226;
     self.reminder=[[ReminderPanel alloc]initWithContentRect:NSMakeRect(0,0,width,height) styleMask:NSWindowStyleMaskBorderless|NSWindowStyleMaskNonactivatingPanel backing:NSBackingStoreBuffered defer:NO];self.reminder.preview=preview;self.reminder.title=preview?@"喝水提醒预览":@"喝水提醒";self.reminder.releasedWhenClosed=NO;self.reminder.hidesOnDeactivate=NO;self.reminder.level=NSFloatingWindowLevel;self.reminder.opaque=NO;self.reminder.backgroundColor=NSColor.clearColor;self.reminder.hasShadow=YES;self.reminder.movableByWindowBackground=YES;self.reminder.collectionBehavior=NSWindowCollectionBehaviorCanJoinAllSpaces|NSWindowCollectionBehaviorFullScreenAuxiliary;
     self.reminder.appearance=source.effectiveAppearance?:NSApp.effectiveAppearance;
-    if(context[@"dark"])self.reminder.appearance=[NSAppearance appearanceNamed:[context[@"dark"]boolValue]?NSAppearanceNameDarkAqua:NSAppearanceNameAqua];
-    NSColor *accent=context[@"accent"]?:NSColor.controlAccentColor,*foreground=context[@"base"]?:NSColor.labelColor;
-    NSVisualEffectView*v=[[NSVisualEffectView alloc]initWithFrame:NSMakeRect(0,0,width,height)];v.material=NSVisualEffectMaterialPopover;v.state=context[@"blur"] && ![context[@"blur"]boolValue]?NSVisualEffectStateInactive:NSVisualEffectStateActive;v.blendingMode=NSVisualEffectBlendingModeBehindWindow;v.wantsLayer=YES;v.layer.cornerRadius=compact?18:24;v.layer.masksToBounds=YES;v.layer.borderWidth=0.7;v.layer.borderColor=[NSColor.separatorColor colorWithAlphaComponent:0.35].CGColor;
-    NSColor*bg=context[@"background"];if(bg && bg.alphaComponent>0.05){NSView*tint=[[NSView alloc]initWithFrame:v.bounds];tint.wantsLayer=YES;tint.layer.backgroundColor=bg.CGColor;tint.alphaValue=0.7;[v addSubview:tint];}
+    NSColor *ink=[(context[@"base"]?:NSColor.labelColor) colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    if(ink){CGFloat luminance=0.2126*ink.redComponent+0.7152*ink.greenComponent+0.0722*ink.blueComponent;self.reminder.appearance=[NSAppearance appearanceNamed:luminance>0.6?NSAppearanceNameDarkAqua:NSAppearanceNameAqua];}
+    else if(context[@"dark"])self.reminder.appearance=[NSAppearance appearanceNamed:[context[@"dark"]boolValue]?NSAppearanceNameDarkAqua:NSAppearanceNameAqua];
+    NSVisualEffectView*v=[[NSVisualEffectView alloc]initWithFrame:NSMakeRect(0,0,width,height)];
+    v.material=NSVisualEffectMaterialHUDWindow;v.state=context[@"blur"] && ![context[@"blur"]boolValue]?NSVisualEffectStateInactive:NSVisualEffectStateActive;
+    v.blendingMode=NSVisualEffectBlendingModeBehindWindow;v.wantsLayer=YES;
+    v.layer.cornerRadius=compact?20:22;v.layer.masksToBounds=YES;
+    v.layer.borderWidth=0.5;v.layer.borderColor=[NSColor.whiteColor colorWithAlphaComponent:0.12].CGColor;
+    NSColor*bg=context[@"background"];
+    if(!bg || bg.alphaComponent<0.1)bg=[NSColor colorWithCalibratedRed:0.11 green:0.13 blue:0.16 alpha:0.88];
+    NSView*tint=[[NSView alloc]initWithFrame:v.bounds];tint.wantsLayer=YES;tint.layer.backgroundColor=bg.CGColor;tint.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;[v addSubview:tint];
+    NSMutableDictionary *presentation=[config mutableCopy];presentation[@"preview"]=@(preview);
+    presentation[@"expires"]=@(NSDate.date.timeIntervalSince1970+[config[@"duration"]integerValue]);
+    NSView *content=CFBridgingRelease(WidgetifyCreateWaterReminder((__bridge void*)source.contentView,(__bridge void*)presentation,(__bridge void*)(context?:@{}),(__bridge void*)self));
+    content.frame=v.bounds;content.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;[v addSubview:content];
     self.reminder.contentView=v;
-    NSImageView*icon=[[NSImageView alloc]initWithFrame:compact?NSMakeRect(18,38,34,34):NSMakeRect(22,120,40,40)];icon.image=[[NSImage imageWithSystemSymbolName:@"drop.fill" accessibilityDescription:@"喝水"]imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:compact?28:34 weight:NSFontWeightMedium]];icon.imageScaling=NSImageScaleProportionallyUpOrDown;icon.contentTintColor=accent;[v addSubview:icon];
-    NSTextField*title=[self label:@"该喝水了" frame:compact?NSMakeRect(66,55,205,23):NSMakeRect(76,135,215,28) size:compact?17:21 color:foreground];title.font=[NSFont systemFontOfSize:compact?17:21 weight:NSFontWeightSemibold];[v addSubview:title];
-    [v addSubview:[self label:preview?@"提醒预览 · 使用当前样式与停留时间":@"休息一下，喝一杯水吧。" frame:compact?NSMakeRect(66,34,278,19):NSMakeRect(24,91,270,24) size:12 color:NSColor.secondaryLabelColor]];
-    self.countdown=[self label:@"" frame:compact?NSMakeRect(18,10,157,18):NSMakeRect(24,64,268,18) size:11 color:NSColor.tertiaryLabelColor];[v addSubview:self.countdown];
-    NSButton*close=[NSButton buttonWithTitle:@"知道了" target:self action:@selector(dismiss:)];close.frame=compact?NSMakeRect(280,6,76,27):NSMakeRect(185,18,107,30);close.bezelStyle=NSBezelStyleRounded;[v addSubview:close];
-    NSButton*later=[NSButton buttonWithTitle:@"10 分钟后提醒" target:self action:@selector(snooze:)];later.frame=compact?NSMakeRect(161,6,120,27):NSMakeRect(22,18,151,30);later.bezelStyle=NSBezelStyleRounded;[v addSubview:later];
     NSScreen*screen=source.screen?:NSScreen.mainScreen;NSRect safe=screen.visibleFrame;NSPoint position=NSMakePoint(NSMaxX(safe)-width-22,NSMaxY(safe)-height-22);
     if(source && [config[@"position"]integerValue]==0){NSRect frame=source.frame;position=NSMakePoint(NSMaxX(frame)+12,NSMaxY(frame)-height);if(position.x+width>NSMaxX(safe))position.x=frame.origin.x-width-12;position.x=MAX(NSMinX(safe)+12,MIN(position.x,NSMaxX(safe)-width-12));position.y=MAX(NSMinY(safe)+12,MIN(position.y,NSMaxY(safe)-height-12));}
-    [self.reminder setFrameOrigin:position];[self.reminder orderFrontRegardless];if(preview)[self.reminder makeKeyAndOrderFront:nil];
-    NSInteger seconds=[config[@"duration"]integerValue];if(seconds>0){self.expires=[NSDate dateWithTimeIntervalSinceNow:seconds];self.closeTimer=[NSTimer timerWithTimeInterval:seconds repeats:NO block:^(NSTimer*t){[self dismiss:nil];}];[NSRunLoop.mainRunLoop addTimer:self.closeTimer forMode:NSRunLoopCommonModes];self.countdownTimer=[NSTimer timerWithTimeInterval:1 repeats:YES block:^(NSTimer*t){[self updateCountdown];}];[NSRunLoop.mainRunLoop addTimer:self.countdownTimer forMode:NSRunLoopCommonModes];[self updateCountdown];}else self.countdown.stringValue=@"停留至手动关闭";
+    NSPanel *panel=self.reminder;BOOL animate=!NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion;
+    [panel setFrameOrigin:NSMakePoint(position.x,position.y-(animate?10:0))];panel.alphaValue=animate?0:1;
+    [panel orderFrontRegardless];if(preview || NSApp.isActive)[panel makeKeyAndOrderFront:nil];if(preview)[NSApp activateIgnoringOtherApps:YES];
+    if(animate)[NSAnimationContext runAnimationGroup:^(NSAnimationContext *animation){animation.duration=0.28;animation.timingFunction=[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];panel.animator.alphaValue=1;[panel.animator setFrameOrigin:position];} completionHandler:nil];
+    NSInteger seconds=[config[@"duration"]integerValue];
+    if(seconds>0){self.expires=[NSDate dateWithTimeIntervalSinceNow:seconds];__weak typeof(self) weakSelf=self;self.closeTimer=[NSTimer timerWithTimeInterval:seconds repeats:NO block:^(NSTimer*t){[weakSelf dismiss:nil];}];[NSRunLoop.mainRunLoop addTimer:self.closeTimer forMode:NSRunLoopCommonModes];}
     if([config[@"sound"]boolValue])[[NSSound soundNamed:@"Glass"]play];
 }
-- (void)updateCountdown{self.countdown.stringValue=[NSString stringWithFormat:@"%ld 秒后自动关闭",(long)MAX(0,ceil(self.expires.timeIntervalSinceNow))];}
-- (void)dismiss:(id)sender{[self.closeTimer invalidate];[self.countdownTimer invalidate];self.closeTimer=nil;self.countdownTimer=nil;[self.reminder orderOut:nil];self.reminder=nil;}
+- (void)dismiss:(id)sender{
+    [self.closeTimer invalidate];[self.countdownTimer invalidate];self.closeTimer=nil;self.countdownTimer=nil;
+    NSPanel *panel=self.reminder;self.reminder=nil;if(!panel)return;
+    if(NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion){[panel orderOut:nil];return;}
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *animation){animation.duration=0.16;panel.animator.alphaValue=0;} completionHandler:^{[panel orderOut:nil];}];
+}
 - (void)snooze:(id)sender{
-    NSDictionary*c=self.activeConfig,*context=self.activeContext;NSString*i=context[@"id"];[self dismiss:nil];NSTimer*t=[NSTimer timerWithTimeInterval:600 repeats:NO block:^(NSTimer*t){NSWindow*w=[self.windows objectForKey:i];if(w && [WidgetifyWaterConfiguration(i)[@"enabled"]boolValue])[self present:c context:WidgetifyContext(w)?:context window:w preview:NO];}];[NSRunLoop.mainRunLoop addTimer:t forMode:NSRunLoopCommonModes];
+    if(!self.reminder || self.reminder.preview){[self dismiss:nil];return;}
+    NSString*i=self.activeContext[@"id"];NSMutableDictionary*c=[WidgetifyWaterConfiguration(i)mutableCopy];
+    c[@"nextReminderAt"]=@(NSDate.date.timeIntervalSince1970+600);
+    [NSUserDefaults.standardUserDefaults setObject:c forKey:WidgetifyWaterKey(i)];[self dismiss:nil];
 }
 @end
 #ifndef ENHANCEMENTS_TEST
@@ -124,6 +146,17 @@ int main(void){@autoreleasepool{
     NSString *error=nil;
     NSCAssert(([WidgetifyParseTimes(@"9:30，11:00, 09:30\n16:00",&error)isEqual:@[@"09:30",@"11:00",@"16:00"]]),@"Normalization");
     for(NSString *bad in @[@"24:00",@"12:60",@"-1:30",@"9:3",@"",@"12:00abc",@"09:00:00"])NSCAssert(WidgetifyParseTimes(bad,&error)==nil,@"Invalid time");
+    NSDate *start=[NSDate dateWithTimeIntervalSince1970:1800000000],*next=[start dateByAddingTimeInterval:60];
+    NSCAssert(WidgetifyIntervalIsDue([next dateByAddingTimeInterval:-1],[next dateByAddingTimeInterval:1],next),@"Interval crosses due date");
+    NSCAssert(!WidgetifyIntervalIsDue(start,[start dateByAddingTimeInterval:30],next),@"No early interval");
+    NSCAssert(!WidgetifyIntervalIsDue(start,[next dateByAddingTimeInterval:600],next),@"Wake skips backlog");
+    NSCAssert(!WidgetifyIntervalIsDue([next dateByAddingTimeInterval:30],[next dateByAddingTimeInterval:31],next),@"Restart skips overdue interval");
+    NSDictionary *intervalConfig=@{@"enabled":@YES,@"intervalMinutes":@45,@"nextReminderAt":@(start.timeIntervalSince1970+2700),@"style":@0};
+    NSDictionary *styleChange=WidgetifyApplyIntervalConfiguration(intervalConfig,@{@"enabled":@YES,@"intervalMinutes":@45,@"style":@1},start);
+    NSCAssert([styleChange[@"nextReminderAt"]isEqual:intervalConfig[@"nextReminderAt"]],@"Appearance does not reset interval");
+    NSDictionary *intervalChange=WidgetifyApplyIntervalConfiguration(intervalConfig,@{@"enabled":@YES,@"intervalMinutes":@30},start);
+    NSCAssert([intervalChange[@"nextReminderAt"]doubleValue]==start.timeIntervalSince1970+1800,@"Changed interval restarts clock");
+    NSCAssert(WidgetifyApplyIntervalConfiguration(intervalConfig,@{@"intervalMinutes":@0},start)==nil,@"Reject zero interval");
     NSURL *desktop=[NSURL fileURLWithPath:@"/example/Desktop" isDirectory:YES];
     NSCAssert(WidgetifyIsDesktopChild([NSURL fileURLWithPath:@"/example/Desktop/Folder"],desktop),@"Desktop child");
     NSCAssert(!WidgetifyIsDesktopChild([NSURL fileURLWithPath:@"/example/DesktopOther/Folder"],desktop),@"Prefix collision");
@@ -146,6 +179,6 @@ int main(void){@autoreleasepool{
     NSURL *ordinary=[fixture URLByAppendingPathComponent:@"ordinary.txt"],*renamed=[fixture URLByAppendingPathComponent:@"renamed.txt"];[@"normal" writeToURL:ordinary atomically:YES encoding:NSUTF8StringEncoding error:NULL];
     NSCAssert([fm moveItemAtURL:ordinary toURL:renamed error:NULL] && ![fm fileExistsAtPath:ordinary.path],@"Unrelated moves keep native behavior");
     [fm removeItemAtURL:fixture error:NULL];if(previous)[NSUserDefaults.standardUserDefaults setObject:previous forKey:@"custom.references.links.v1"];else[NSUserDefaults.standardUserDefaults removeObjectForKey:@"custom.references.links.v1"];
-    NSLog(@"PASS: time parsing, desktop boundaries, due-time protection, directory references without moving originals, unrelated operations unchanged.");
+    NSLog(@"PASS: interval scheduling, wake/restart protection, appearance changes preserve due date, time parsing, desktop boundaries, protected directory references.");
 }return 0;}
 #endif

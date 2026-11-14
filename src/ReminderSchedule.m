@@ -24,3 +24,16 @@ NSString *WidgetifySlotKey(NSDate *date,NSString *time){
     NSDateComponents *c=[NSCalendar.currentCalendar components:NSCalendarUnitYear|NSCalendarUnitMonth|NSCalendarUnitDay fromDate:date];
     return [NSString stringWithFormat:@"%04ld-%02ld-%02ld/%@",(long)c.year,(long)c.month,(long)c.day,time];
 }
+
+BOOL WidgetifyIntervalIsDue(NSDate *previous,NSDate *now,NSDate *next){
+    if(!previous || !next || [now compare:previous]!=NSOrderedDescending)return NO;
+    return [previous compare:next]!=NSOrderedDescending && [next compare:now]!=NSOrderedDescending && [now timeIntervalSinceDate:next]<=300 && [now timeIntervalSinceDate:previous]<=300;
+}
+
+NSDictionary *WidgetifyApplyIntervalConfiguration(NSDictionary *old,NSDictionary *values,NSDate *now){
+    NSInteger interval=[values[@"intervalMinutes"]integerValue];if(interval<1||interval>240)return nil;
+    BOOL restart=[old[@"enabled"]boolValue]!=[values[@"enabled"]boolValue] || [old[@"intervalMinutes"]integerValue]!=interval;
+    NSMutableDictionary *result=[old mutableCopy];[result addEntriesFromDictionary:values];result[@"scheduleVersion"]=@2;
+    if(restart || !result[@"nextReminderAt"])result[@"nextReminderAt"]=@(now.timeIntervalSince1970+interval*60);
+    return result;
+}

@@ -80,7 +80,7 @@ static NSString *const FiredKey=@"custom.enhancements.water.deliveredSlots";
     // independent enhancement settings window.
     NSMenu*m=NSApp.mainMenu.numberOfItems?[NSApp.mainMenu itemAtIndex:0].submenu:nil;
     if(m && ![m itemWithTag:90740]){
-        for(NSArray*spec in @[@[@"喝水组件设置…",@"openWater:"],@[@"文件夹组件设置…",@"openFolders:"]]){NSMenuItem*item=[[NSMenuItem alloc]initWithTitle:spec[0] action:NSSelectorFromString(spec[1]) keyEquivalent:@""];item.target=self;item.tag=[spec[1]isEqual:@"openWater:"]?90740:90741;[m insertItem:item atIndex:MIN(2,m.numberOfItems)];}
+        for(NSArray*spec in @[@[@"喝水组件设置…",@"openWater:"],@[@"文件夹组件设置…",@"openFolders:"],@[@"快捷启动分类设置…",@"openShortcuts:"]]){NSMenuItem*item=[[NSMenuItem alloc]initWithTitle:spec[0] action:NSSelectorFromString(spec[1]) keyEquivalent:@""];item.target=self;item.tag=[spec[1]isEqual:@"openWater:"]?90740:([spec[1]isEqual:@"openShortcuts:"]?90742:90741);[m insertItem:item atIndex:MIN(2,m.numberOfItems)];}
     }
 }
 - (NSView*)settingsForComponent:(NSDictionary*)context window:(NSWindow*)window{return WidgetifySettingsView(context,window,self.folders,self);}
@@ -90,6 +90,7 @@ static NSString *const FiredKey=@"custom.enhancements.water.deliveredSlots";
     for(NSWindow*w in NSApp.windows){NSDictionary*c=WidgetifyContext(w);if(![c[@"kind"]isEqual:kind])continue;[w makeKeyAndOrderFront:nil];[NSApp activateIgnoringOtherApps:YES];WidgetifyOpenOriginalSettings(w);return;}
 }
 - (void)openWater:(id)sender{[self openKind:@"water"];}
+- (void)openShortcuts:(id)sender{[self openKind:@"shortcuts"];}
 - (void)openFolders:(id)sender{[self openKind:@"folder"];}
 - (void)previewWater:(NSDictionary*)config context:(NSDictionary*)context window:(NSWindow*)window{[self present:config context:WidgetifyContext(window)?:context window:window preview:YES];}
 - (NSTextField*)label:(NSString*)s frame:(NSRect)r size:(CGFloat)size color:(NSColor*)color{
@@ -142,7 +143,9 @@ static NSString *const FiredKey=@"custom.enhancements.water.deliveredSlots";
 #ifndef ENHANCEMENTS_TEST
 __attribute__((constructor))static void LoadEnhancements(void){@autoreleasepool{WidgetifyInstallDirectoryReferences();}dispatch_async(dispatch_get_main_queue(),^{NSTimer*t=[NSTimer timerWithTimeInterval:1 repeats:YES block:^(NSTimer*t){[[WidgetifyEnhancements shared]install];}];[NSRunLoop.mainRunLoop addTimer:t forMode:NSRunLoopCommonModes];});}
 #else
+extern void WidgetifyTestCategories(void);
 int main(void){@autoreleasepool{
+    WidgetifyTestCategories();
     NSString *error=nil;
     NSCAssert(([WidgetifyParseTimes(@"9:30，11:00, 09:30\n16:00",&error)isEqual:@[@"09:30",@"11:00",@"16:00"]]),@"Normalization");
     for(NSString *bad in @[@"24:00",@"12:60",@"-1:30",@"9:3",@"",@"12:00abc",@"09:00:00"])NSCAssert(WidgetifyParseTimes(bad,&error)==nil,@"Invalid time");

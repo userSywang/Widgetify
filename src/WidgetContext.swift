@@ -49,6 +49,7 @@ private func hosting(_ view: NSView) -> NSView? {
     let kind: String
     if type.contains("WaterController") { kind = "water" }
     else if type.contains("DocumentController") { kind = "folder" }
+    else if type.contains("AppController") { kind = "shortcuts" }
     else { return nil }
     for _ in 0..<20 {
         if let model = field(root, "widget"), let id = field(model, "id") as? String,

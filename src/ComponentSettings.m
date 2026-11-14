@@ -17,6 +17,7 @@ NSDictionary *WidgetifyWaterConfiguration(NSString *i){
     return c;
 }
 extern void *WidgetifyCreateWaterSettings(void *,void *);
+extern void *WidgetifyCreateCategorySettings(void *);
 @interface FlippedSettingsDocument:NSView
 @end
 @implementation FlippedSettingsDocument
@@ -47,6 +48,7 @@ extern void *WidgetifyCreateWaterSettings(void *,void *);
     NSPopUpButton *b=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(18,self.y,292,28) pullsDown:NO];[b addItemsWithTitles:labels];for(NSUInteger i=0;i<values.count;i++)b.itemArray[i].tag=[values[i]integerValue];[b selectItemWithTag:selected];[self.document addSubview:b];self.y+=36;return b;
 }
 - (NSView*)make{
+    if([self.context[@"kind"]isEqual:@"shortcuts"])return CFBridgingRelease(WidgetifyCreateCategorySettings((__bridge void*)self.context[@"id"]));
     // A flipped document inside the original popover, not a separate window.
     self.document=[[FlippedSettingsDocument alloc]initWithFrame:NSMakeRect(0,0,328,800)];self.y=16;
     if([self.context[@"kind"]isEqual:@"water"]){

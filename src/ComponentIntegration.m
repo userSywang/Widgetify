@@ -46,7 +46,7 @@ static void Show(NSPopover *popover,SEL cmd,NSRect rect,NSView *anchor,NSRectEdg
                 NSViewController *originalController=popover.contentViewController;
                 NSView *original=originalController.view;
                 container=[[ComponentSettingsContainer alloc]initWithFrame:original.frame];container.anchorWindow=anchor.window;container.original=original;container.extension=extra;extra.hidden=YES;
-                container.tabs=[NSSegmentedControl segmentedControlWithLabels:@[@"组件设置",[context[@"kind"]isEqual:@"water"]?@"喝水提醒":@"文件夹管理"] trackingMode:NSSegmentSwitchTrackingSelectOne target:container action:@selector(selectTab:)];container.tabs.selectedSegment=0;
+                container.tabs=[NSSegmentedControl segmentedControlWithLabels:@[@"组件设置",[context[@"kind"]isEqual:@"water"]?@"喝水提醒":([context[@"kind"]isEqual:@"shortcuts"]?@"应用分类":@"文件夹管理")] trackingMode:NSSegmentSwitchTrackingSelectOne target:container action:@selector(selectTab:)];container.tabs.selectedSegment=0;
                 NSViewController *wrapperController=[NSViewController new];[wrapperController addChildViewController:originalController];
                 [original removeFromSuperview];[container addSubview:original];[container addSubview:extra];[container addSubview:container.tabs];wrapperController.view=container;popover.contentViewController=wrapperController;
                 objc_setAssociatedObject(popover,&ContainerKey,container,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -103,3 +103,12 @@ BOOL WidgetifyImportDirectoryReferences(NSWindow *window,NSArray<NSURL *> *urls)
     if(accepted){NSMutableArray *pending=objc_getAssociatedObject(window,&ImportKey);if(!pending){pending=[NSMutableArray new];objc_setAssociatedObject(window,&ImportKey,pending,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}[pending addObject:info];dispatch_after(dispatch_time(DISPATCH_TIME_NOW,30*NSEC_PER_SEC),dispatch_get_main_queue(),^{[pending removeObject:info];});}
     return accepted;
 }
+
+extern void WidgetifyShowCategoryMenu(void *,void *,void *);
+__attribute__((constructor)) static void InstallCategoryMenu(void){dispatch_async(dispatch_get_main_queue(),^{
+    [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskRightMouseDown handler:^NSEvent*(NSEvent *event){
+        NSDictionary *context=WidgetifyContext(event.window);
+        if([context[@"kind"]isEqual:@"shortcuts"]){WidgetifyShowCategoryMenu((__bridge void*)context[@"id"],(__bridge void*)event.window,(__bridge void*)event);return nil;}
+        return event;
+    }];
+});}

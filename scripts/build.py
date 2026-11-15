@@ -65,7 +65,7 @@ def main():
             raise ValueError('Enhancement source is missing')
         module = app/'Contents/Frameworks/WidgetifyEnhancements.dylib'
         context_module = app/'Contents/Frameworks/WidgetifyContext.dylib'
-        run('xcrun','swiftc','-target','arm64-apple-macos12.0','-emit-library','-parse-as-library',ROOT/'src/WidgetContext.swift',ROOT/'src/WaterPresentation.swift',ROOT/'src/ShortcutCategories.swift','-o',context_module,'-Xlinker','-install_name','-Xlinker','@loader_path/WidgetifyContext.dylib')
+        run('xcrun','swiftc','-target','arm64-apple-macos12.0','-emit-library','-parse-as-library',ROOT/'src/WidgetContext.swift',ROOT/'src/WaterPresentation.swift',ROOT/'src/ShortcutCategories.swift',ROOT/'src/InspirationPresentation.swift',ROOT/'src/InspirationHistory.swift','-o',context_module,'-Xlinker','-install_name','-Xlinker','@loader_path/WidgetifyContext.dylib')
         run('xcrun','clang','-arch','arm64','-mmacosx-version-min=12.0','-fobjc-arc','-fblocks','-dynamiclib','-framework','AppKit','-framework','UserNotifications','-framework','CoreGraphics','-framework','QuartzCore', source, ROOT/'src/OriginalFolderBridge.m',ROOT/'src/ComponentIntegration.m',ROOT/'src/ComponentSettings.m',ROOT/'src/ReminderSchedule.m',ROOT/'src/DirectoryReferences.m',context_module, '-o', module, '-install_name','@rpath/WidgetifyEnhancements.dylib')
         embed(app/'Contents/MacOS/Widgetify')
     run('codesign','--force','--deep','--sign','-','--entitlements',entitlements_path,app)

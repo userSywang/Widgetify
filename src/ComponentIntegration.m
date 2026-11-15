@@ -105,10 +105,13 @@ BOOL WidgetifyImportDirectoryReferences(NSWindow *window,NSArray<NSURL *> *urls)
 }
 
 extern void WidgetifyShowCategoryMenu(void *,void *,void *);
+extern void WidgetifyShowInspirationSettings(void *);
 __attribute__((constructor)) static void InstallCategoryMenu(void){dispatch_async(dispatch_get_main_queue(),^{
     [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskRightMouseDown handler:^NSEvent*(NSEvent *event){
         NSDictionary *context=WidgetifyContext(event.window);
-        if([context[@"kind"]isEqual:@"shortcuts"]){WidgetifyOpenOriginalSettings(event.window);return nil;}
+        if([context[@"kind"]isEqual:@"shortcuts"]){
+            if([NSBundle.mainBundle.infoDictionary[@"WidgetifyInspirationPreviewIDs"]containsObject:context[@"id"]])WidgetifyShowInspirationSettings((__bridge void*)event.window);
+            else WidgetifyOpenOriginalSettings(event.window);return nil;}
         return event;
     }];
 });}

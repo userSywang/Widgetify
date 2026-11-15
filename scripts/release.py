@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--artifacts', type=Path, required=True)
+    parser.add_argument('--extra-asset',type=Path,action='append',default=[])
     parser.add_argument('--repo', default='userSywang/Widgetify')
     args = parser.parse_args()
     gh = shutil.which('gh') or '/opt/homebrew/bin/gh'
@@ -50,7 +51,10 @@ def main():
     source = artifacts/f'Widgetify-{version}-source.zip'
     run('git','archive','--format=zip','--prefix=Widgetify-source-'+version+'/',f'--output={source}','HEAD')
     checksums = artifacts/'SHA256SUMS.txt'
-    checksums.write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in (installer,source)))
+    assets_to_upload=[installer,source]+[p.resolve() for p in args.extra_asset]
+    if len({p.name for p in assets_to_upload}) != len(assets_to_upload) or any(not p.is_file() for p in assets_to_upload):
+        parser.error('Extra assets must be existing files with unique names')
+    checksums.write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in assets_to_upload))
     changelog = (ROOT/'CHANGELOG.md').read_text()
     section = changelog.split('## '+tag+' — ',1)[1].split('\n',1)[1].split('\n## ',1)[0].strip()
     notes = artifacts/'release-notes.md'
@@ -66,12 +70,12 @@ def main():
     # Publish only after every attachment is present and verified. Upload files
     # sequentially so a dropped proxy connection can be retried independently.
     run(gh,'release','create',tag,'--repo',args.repo,'--verify-tag','--draft','--title','Widgetify '+tag,'--notes-file',notes,retry=True)
-    for asset in (checksums,source,installer):
+    for asset in [checksums]+assets_to_upload:
         run(gh,'release','upload',tag,asset,'--repo',args.repo,'--clobber',retry=True)
     releases = json.loads(run(gh,'api',f'repos/{args.repo}/releases?per_page=100',capture=True,retry=True).stdout)
     result = next(release for release in releases if release['tag_name'] == tag)
     assets = {a['name']:a for a in result['assets']}
-    for p in (installer,source,checksums):
+    for p in assets_to_upload+[checksums]:
         asset = assets[p.name]
         if asset['state'] != 'uploaded' or asset['size'] != p.stat().st_size:
             raise RuntimeError('Uploaded asset verification failed: '+p.name)

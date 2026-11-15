@@ -277,18 +277,6 @@ private struct InlineLaunchCard: View {
         Button { model.select(id) } label: { if model.selected == id { Label(title, systemImage: "checkmark") } else { Text(title) } }
     }
 }
-// Attach to the native content surface, inside its monochrome processing
-// hierarchy. Never replace/reparent the window's root or reproduce its backdrop.
-private func shortcutSurface(_ view: NSView) -> NSView? {
-    if NSStringFromClass(type(of: view)) == "Widgetify.WidgetMonochromeHostingView" { return view }
-    for child in view.subviews { if let surface = shortcutSurface(child) { return surface } }
-    return nil
-}
-private func hideOriginalGrid(_ view: NSView, excluding presentation: NSView) {
-    if view === presentation { return }
-    if view is NSScrollView { view.alphaValue = 0; return }
-    for child in view.subviews { hideOriginalGrid(child, excluding: presentation) }
-}
 private final class InlineLaunchAttachment: NSObject {
     weak var source: NSView?
     weak var surface: NSView?
@@ -302,7 +290,7 @@ private final class InlineLaunchAttachment: NSObject {
         presentation.autoresizingMask = [.width, .height]
         presentation.frame = surface.bounds
         surface.addSubview(presentation, positioned: .above, relativeTo: nil)
-        hideOriginalGrid(source, excluding: presentation)
+        hideNativeWidgetScrolls(source, excluding: presentation)
     }
     func refresh(_ theme: NSDictionary) {
         guard let source, let surface else { return }
@@ -310,7 +298,7 @@ private final class InlineLaunchAttachment: NSObject {
         if model.contentWidth != surface.bounds.width { model.contentWidth = surface.bounds.width }
         if presentation.superview !== surface { surface.addSubview(presentation, positioned: .above, relativeTo: nil) }
         presentation.frame = surface.bounds
-        hideOriginalGrid(source, excluding: presentation)
+        hideNativeWidgetScrolls(source, excluding: presentation)
     }
 }
 private var inlineAttachmentKey: UInt8 = 0
@@ -320,12 +308,12 @@ public func updateInlineShortcuts(_ windowPointer: UnsafeMutableRawPointer, _ co
     let theme = Unmanaged<NSDictionary>.fromOpaque(contextPointer).takeUnretainedValue()
     guard let id = theme["id"] as? String, let source = window.contentView else { return }
     if let attachment = objc_getAssociatedObject(source, &inlineAttachmentKey) as? InlineLaunchAttachment {
-        if shortcutSurface(source) === attachment.surface { attachment.refresh(theme); return }
+        if nativeWidgetSurface(source) === attachment.surface { attachment.refresh(theme); return }
         attachment.presentation.removeFromSuperview()
         objc_setAssociatedObject(source, &inlineAttachmentKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
     }
     // Unsupported native hierarchy: leave the actual component untouched.
-    guard let surface = shortcutSurface(source) else { return }
+    guard let surface = nativeWidgetSurface(source) else { return }
     let attachment = InlineLaunchAttachment(source: source, surface: surface, id: id, window: window, theme: theme)
     objc_setAssociatedObject(source, &inlineAttachmentKey, attachment, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
 }

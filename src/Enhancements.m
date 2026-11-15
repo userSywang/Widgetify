@@ -2,7 +2,10 @@
 #import <UserNotifications/UserNotifications.h>
 #import <QuartzCore/QuartzCore.h>
 extern void *WidgetifyCreateWaterReminder(void *,void *,void *,void *);
+extern void *WidgetifyCreateWaterSurface(BOOL,void *);
 extern void WidgetifyUpdateInlineShortcuts(void *,void *);
+extern void WidgetifyUpdateInspirationPreview(void *,void *);
+extern BOOL WidgetifyExportInspirationPreview(void *);
 #import "OriginalFolderBridge.h"
 #import "ComponentIntegration.h"
 #import "ComponentSettings.h"
@@ -12,6 +15,7 @@ extern void WidgetifyUpdateInlineShortcuts(void *,void *);
 // A preview has its own signed sandbox/container. Never initialize folder
 // hooks, reminders or production migration in this mode.
 static BOOL IsStylePreview(void){return [NSBundle.mainBundle.infoDictionary[@"WidgetifyStylePreview"]boolValue];}
+static BOOL IsInspirationPreview(NSString *identifier){return [NSBundle.mainBundle.infoDictionary[@"WidgetifyInspirationPreviewIDs"]containsObject:identifier];}
 static BOOL IsReferencePreview(NSString *identifier){return [NSBundle.mainBundle.infoDictionary[@"WidgetifyPreviewReferenceIDs"]containsObject:identifier];}
 static BOOL ContainsNativeView(NSView *view,NSString *name){if([NSStringFromClass(view.class)containsString:name])return YES;for(NSView *child in view.subviews)if(ContainsNativeView(child,name))return YES;return NO;}
 static void SeedStylePreview(void){
@@ -27,7 +31,18 @@ static void SeedStylePreview(void){
     [NSUserDefaults.standardUserDefaults setObject:seed[@"revision"] forKey:@"WidgetifyPreviewSeed"];
     NSURL *folder=[support URLByAppendingPathComponent:@"Widgetify" isDirectory:YES];
     if(![NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:nil error:NULL])exit(78);
-    if(![seed[@"layoutData"]writeToURL:[folder URLByAppendingPathComponent:@"autosaved.widgetlist4"] options:NSDataWritingAtomic error:NULL])exit(78);
+    NSData *layoutData=seed[@"layoutData"];
+    if([NSBundle.mainBundle.infoDictionary[@"WidgetifyPreviewUseMainScreen"]boolValue]){
+        NSMutableArray *layout=[NSJSONSerialization JSONObjectWithData:layoutData options:NSJSONReadingMutableContainers error:NULL];
+        CFUUIDRef uuid=CGDisplayCreateUUIDFromDisplayID(CGMainDisplayID());
+        NSString *screen=uuid?CFBridgingRelease(CFUUIDCreateString(NULL,uuid)):nil;if(uuid)CFRelease(uuid);
+        CGRect frame=CGDisplayBounds(CGMainDisplayID());
+        if(screen && [layout isKindOfClass:NSMutableArray.class]){
+            for(NSMutableDictionary *widget in layout){widget[@"screenID"]=screen;widget[@"screenFrame"]=@[@[@0,@0],@[@(frame.size.width),@(frame.size.height)]];}
+            layoutData=[NSJSONSerialization dataWithJSONObject:layout options:0 error:NULL];
+        }
+    }
+    if(![layoutData writeToURL:[folder URLByAppendingPathComponent:@"autosaved.widgetlist4"] options:NSDataWritingAtomic error:NULL])exit(78);
     [NSUserDefaults.standardUserDefaults synchronize];
 }
 
@@ -112,13 +127,16 @@ static NSString *const FiredKey=@"custom.enhancements.water.deliveredSlots";
     if(!self.initialized){self.initialized=YES;WidgetifyInstallComponentIntegration(self);}
     for(NSWindow *window in [NSApp.windows copy]){
         NSDictionary *context=WidgetifyContext(window);
-        if([context[@"kind"]isEqual:@"shortcuts"] && !IsReferencePreview(context[@"id"]))WidgetifyUpdateInlineShortcuts((__bridge void*)window,(__bridge void*)context);
+        if(IsInspirationPreview(context[@"id"]))WidgetifyUpdateInspirationPreview((__bridge void*)window,(__bridge void*)context);
+        else if([context[@"kind"]isEqual:@"shortcuts"] && !IsReferencePreview(context[@"id"]))WidgetifyUpdateInlineShortcuts((__bridge void*)window,(__bridge void*)context);
     }
     NSMenu *menu=NSApp.mainMenu.numberOfItems?[NSApp.mainMenu itemAtIndex:0].submenu:nil;
     if(menu && ![menu itemWithTag:90801]){
-        NSArray *specs=@[@[@"查看分类预览",@"focusPreview:"],@[@"查看原快捷启动对照",@"focusReference:"],@[@"查看翻译组件对照",@"focusTranslation:"]];
+        NSArray *specs=@[@[NSBundle.mainBundle.infoDictionary[@"WidgetifyInspirationPreviewIDs"]?@"查看灵感预览":@"查看分类预览",@"focusPreview:"],@[@"查看原快捷启动对照",@"focusReference:"],@[@"查看翻译组件对照",@"focusTranslation:"]];
         NSInteger tag=90801;
         for(NSArray *spec in specs){NSMenuItem *item=[[NSMenuItem alloc]initWithTitle:spec[0] action:NSSelectorFromString(spec[1]) keyEquivalent:@""];item.target=self;item.tag=tag++;[menu insertItem:item atIndex:MIN(2,menu.numberOfItems)];}
+        if(NSBundle.mainBundle.infoDictionary[@"WidgetifyWaterPreviewID"]){NSMenuItem *item=[[NSMenuItem alloc]initWithTitle:@"查看喝水组件" action:@selector(focusWaterPreview:) keyEquivalent:@""];item.target=self;[menu insertItem:item atIndex:2];}
+        if(NSBundle.mainBundle.infoDictionary[@"WidgetifyInspirationPreviewIDs"]){NSMenuItem *item=[[NSMenuItem alloc]initWithTitle:@"导出灵感预览图" action:@selector(exportInspiration:) keyEquivalent:@""];item.target=self;[menu insertItem:item atIndex:2];}
     }
 }
 - (void)focusPreviewKind:(NSInteger)kind{
@@ -128,6 +146,8 @@ static NSString *const FiredKey=@"custom.enhancements.water.deliveredSlots";
         if(match){[window makeKeyAndOrderFront:nil];[NSApp activateIgnoringOtherApps:YES];return;}
     }
 }
+- (void)focusWaterPreview:(id)sender{for(NSWindow *window in [NSApp.windows copy]){NSDictionary *context=WidgetifyContext(window);if([context[@"id"]isEqual:NSBundle.mainBundle.infoDictionary[@"WidgetifyWaterPreviewID"]]){[window makeKeyAndOrderFront:nil];[NSApp activateIgnoringOtherApps:YES];return;}}}
+- (void)exportInspiration:(id)sender{for(NSWindow *window in [NSApp.windows copy]){NSDictionary *context=WidgetifyContext(window);if(IsInspirationPreview(context[@"id"]))WidgetifyExportInspirationPreview((__bridge void*)window);}}
 - (void)focusPreview:(id)sender{[self focusPreviewKind:0];}
 - (void)focusReference:(id)sender{[self focusPreviewKind:1];}
 - (void)focusTranslation:(id)sender{[self focusPreviewKind:2];}
@@ -152,14 +172,7 @@ static NSString *const FiredKey=@"custom.enhancements.water.deliveredSlots";
     NSColor *ink=[(context[@"base"]?:NSColor.labelColor) colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
     if(ink){CGFloat luminance=0.2126*ink.redComponent+0.7152*ink.greenComponent+0.0722*ink.blueComponent;self.reminder.appearance=[NSAppearance appearanceNamed:luminance>0.6?NSAppearanceNameDarkAqua:NSAppearanceNameAqua];}
     else if(context[@"dark"])self.reminder.appearance=[NSAppearance appearanceNamed:[context[@"dark"]boolValue]?NSAppearanceNameDarkAqua:NSAppearanceNameAqua];
-    NSVisualEffectView*v=[[NSVisualEffectView alloc]initWithFrame:NSMakeRect(0,0,width,height)];
-    v.material=NSVisualEffectMaterialHUDWindow;v.state=context[@"blur"] && ![context[@"blur"]boolValue]?NSVisualEffectStateInactive:NSVisualEffectStateActive;
-    v.blendingMode=NSVisualEffectBlendingModeBehindWindow;v.wantsLayer=YES;
-    v.layer.cornerRadius=compact?20:22;v.layer.masksToBounds=YES;
-    v.layer.borderWidth=0.5;v.layer.borderColor=[NSColor.whiteColor colorWithAlphaComponent:0.12].CGColor;
-    NSColor*bg=context[@"background"];
-    if(!bg || bg.alphaComponent<0.1)bg=[NSColor colorWithCalibratedRed:0.11 green:0.13 blue:0.16 alpha:0.88];
-    NSView*tint=[[NSView alloc]initWithFrame:v.bounds];tint.wantsLayer=YES;tint.layer.backgroundColor=bg.CGColor;tint.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;[v addSubview:tint];
+    NSView*v=CFBridgingRelease(WidgetifyCreateWaterSurface(compact,(__bridge void*)(context?:@{})));
     NSMutableDictionary *presentation=[config mutableCopy];presentation[@"preview"]=@(preview);
     presentation[@"expires"]=@(NSDate.date.timeIntervalSince1970+[config[@"duration"]integerValue]);
     NSView *content=CFBridgingRelease(WidgetifyCreateWaterReminder((__bridge void*)source.contentView,(__bridge void*)presentation,(__bridge void*)(context?:@{}),(__bridge void*)self));

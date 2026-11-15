@@ -213,3 +213,46 @@ public func createWaterReminder(_ source: UnsafeMutableRawPointer?, _ configurat
     let root = WaterReminderView(config: config, theme: theme, source: view, actions: WaterActions(object))
     return Unmanaged.passRetained(NSHostingView(rootView: root)).toOpaque()
 }
+
+// NSVisualEffectView composites its backdrop separately from ordinary sublayers.
+// Give the effect its own mask as well as clipping the clear outer container.
+final class WaterReminderSurface: NSView {
+    let effect = NSVisualEffectView()
+    private let radius: CGFloat
+    init(size: NSSize, compact: Bool, theme: NSDictionary) {
+        radius = compact ? 20 : 22
+        super.init(frame: NSRect(origin: .zero, size: size))
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.cornerRadius = radius
+        layer?.masksToBounds = true
+        effect.frame = bounds; effect.autoresizingMask = [.width, .height]
+        effect.material = .hudWindow; effect.state = .active; effect.blendingMode = .behindWindow
+        effect.isHidden = (theme["blur"] as? NSNumber)?.boolValue == false
+        addSubview(effect)
+        let tint = NSView(frame: bounds)
+        tint.autoresizingMask = [.width, .height]; tint.wantsLayer = true
+        tint.layer?.backgroundColor = (theme["background"] as? NSColor ?? .clear).cgColor
+        addSubview(tint)
+        updateMask()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override var isOpaque: Bool { false }
+    override func layout() { super.layout(); updateMask() }
+    private func updateMask() {
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let clipRadius = radius
+        let mask = NSImage(size: bounds.size, flipped: false) { rect in
+            NSColor.white.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: clipRadius, yRadius: clipRadius).fill()
+            return true
+        }
+        effect.maskImage = mask
+    }
+}
+@_cdecl("WidgetifyCreateWaterSurface")
+public func createWaterSurface(_ compact: Bool, _ context: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
+    let theme = Unmanaged<NSDictionary>.fromOpaque(context).takeUnretainedValue()
+    let size = compact ? NSSize(width: 366, height: 116) : NSSize(width: 340, height: 226)
+    return Unmanaged.passRetained(WaterReminderSurface(size: size, compact: compact, theme: theme)).toOpaque()
+}

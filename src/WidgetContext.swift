@@ -81,3 +81,16 @@ private func hosting(_ view: NSView) -> NSView? {
     }
     return find(root)
 }
+
+// Attach to the native content surface, inside its monochrome processing
+// hierarchy. Never replace/reparent the window's root or reproduce its backdrop.
+func nativeWidgetSurface(_ view: NSView) -> NSView? {
+    if NSStringFromClass(type(of: view)) == "Widgetify.WidgetMonochromeHostingView" { return view }
+    for child in view.subviews { if let surface = nativeWidgetSurface(child) { return surface } }
+    return nil
+}
+func hideNativeWidgetScrolls(_ view: NSView, excluding presentation: NSView) {
+    if view === presentation { return }
+    if view is NSScrollView { view.alphaValue = 0; view.isHidden = true; view.setAccessibilityHidden(true); return }
+    for child in view.subviews { hideNativeWidgetScrolls(child, excluding: presentation) }
+}

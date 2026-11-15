@@ -150,10 +150,7 @@ private final class InlineLaunchModel: ObservableObject {
     @Published var compact = true
     @Published var selected: String
     @Published var ink = NSColor.white
-    @Published var background = NSColor(calibratedWhite: 0.28, alpha: 0.86)
-    @Published var blur = true
     @Published var fixed = false
-    @Published var backgroundImage: NSImage?
     private var observer: NSObjectProtocol?
     init(id: String, window: NSWindow) {
         self.id = id; self.window = window; categories = loadCategories(id)
@@ -177,13 +174,7 @@ private final class InlineLaunchModel: ObservableObject {
         if compact != isCompact { compact = isCompact }
         if selected != allLaunchApps && selected != unassignedLaunchApps && !categories.groups.contains(where: { $0.id == selected }) { select(allLaunchApps) }
         if let color = theme?["base"] as? NSColor, !ink.isEqual(color) { ink = color }
-        if let color = theme?["background"] as? NSColor, !background.isEqual(color) { background = color }
-        if let value = theme?["blur"] as? Bool, blur != value { blur = value }
         if let value = theme?["fixed"] as? Bool, fixed != value { fixed = value }
-        if let theme {
-            let image = theme["backgroundImage"] as? NSImage
-            if backgroundImage !== image { backgroundImage = image }
-        }
     }
     func open(_ value: String) {
         guard apps.contains(value), let url = URL(string: value), url.isFileURL, url.pathExtension == "app" else { return }
@@ -199,14 +190,6 @@ private struct LaunchDragHandle: NSViewRepresentable {
     let fixed: Bool
     func makeNSView(context: Context) -> LaunchDragView { LaunchDragView() }
     func updateNSView(_ view: LaunchDragView, context: Context) { view.fixed = fixed }
-}
-private struct LaunchMaterial: NSViewRepresentable {
-    let enabled: Bool
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView(); view.material = .hudWindow; view.blendingMode = .behindWindow
-        return view
-    }
-    func updateNSView(_ view: NSVisualEffectView, context: Context) { view.state = enabled ? .active : .inactive; view.isHidden = !enabled }
 }
 private struct LaunchIcon: View {
     let url: String
@@ -264,18 +247,17 @@ private struct InlineLaunchCard: View {
             }
         }.padding(.horizontal, 18).padding(.vertical, 12)
             .foregroundColor(ink).frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background {
-                if let image = model.backgroundImage {
-                    GeometryReader { geometry in Image(nsImage: image).resizable().scaledToFill().frame(width: geometry.size.width, height: geometry.size.height).clipped() }
-                }
-            }
-            .background(Color(nsColor: model.background)).background(LaunchMaterial(enabled: model.blur))
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: model.selected)
     }
     func categoryButton(_ title: String, _ id: String) -> some View {
         Button { model.select(id) } label: { if model.selected == id { Label(title, systemImage: "checkmark") } else { Text(title) } }
     }
+}
+// Hide only the native app grid. The host still draws its own background,
+// including its shared color, opacity, image and blur implementation.
+private func hideOriginalGrid(_ view: NSView) {
+    if view is NSScrollView { view.alphaValue = 0; return }
+    for child in view.subviews { hideOriginalGrid(child) }
 }
 private final class InlineLaunchContainer: NSView {
     let source: NSView
@@ -287,19 +269,21 @@ private final class InlineLaunchContainer: NSView {
         super.init(frame: source.frame)
         // Keep the native hosting view and controller alive, at the same bounds,
         // for native settings, app picking, size/lock/pin and persistence.
-        source.alphaValue = 0
+        source.alphaValue = 1
+        hideOriginalGrid(source)
         addSubview(source); addSubview(presentation)
         autoresizingMask = [.width, .height]
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func layout() { super.layout(); source.frame = bounds; presentation.frame = bounds }
+    func refresh(_ theme: NSDictionary) { model.refresh(theme); hideOriginalGrid(source) }
 }
 @_cdecl("WidgetifyUpdateInlineShortcuts")
 public func updateInlineShortcuts(_ windowPointer: UnsafeMutableRawPointer, _ contextPointer: UnsafeMutableRawPointer) {
     let window = Unmanaged<NSWindow>.fromOpaque(windowPointer).takeUnretainedValue()
     let theme = Unmanaged<NSDictionary>.fromOpaque(contextPointer).takeUnretainedValue()
     guard let id = theme["id"] as? String, let source = window.contentView else { return }
-    if let container = source as? InlineLaunchContainer { container.model.refresh(theme); return }
+    if let container = source as? InlineLaunchContainer { container.refresh(theme); return }
     let container = InlineLaunchContainer(source: source, id: id, window: window, theme: theme)
     window.contentView = container
     container.needsLayout = true; container.layoutSubtreeIfNeeded()

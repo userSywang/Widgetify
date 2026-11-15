@@ -64,8 +64,6 @@ private func hosting(_ view: NSView) -> NSView? {
                 }
                 if let blur: Bool = scalar(field(controller, "_backgroundBlurEnabled"), as: Bool.self) { result["blur"] = blur }
                 if let dark: Bool = scalar(field(controller, "_isDarkMode"), as: Bool.self) { result["dark"] = dark }
-                if let image: NSImage = scalar(field(controller, "_cachedBackgroundImage"), as: NSImage.self) { result["backgroundImage"] = image }
-                else if let data: Data = scalar(field(controller, "_backgroundImageData"), as: Data.self), let image = NSImage(data: data) { result["backgroundImage"] = image }
             }
             return Unmanaged.passRetained(result as NSDictionary).toOpaque()
         }

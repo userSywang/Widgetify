@@ -9,6 +9,28 @@ extern void WidgetifyUpdateInlineShortcuts(void *,void *);
 #import "ReminderSchedule.h"
 #import "DirectoryReferences.h"
 
+// A preview has its own signed sandbox/container. Never initialize folder
+// hooks, reminders or production migration in this mode.
+static BOOL IsStylePreview(void){return [NSBundle.mainBundle.infoDictionary[@"WidgetifyStylePreview"]boolValue];}
+static BOOL IsReferencePreview(NSString *identifier){return [NSBundle.mainBundle.infoDictionary[@"WidgetifyPreviewReferenceIDs"]containsObject:identifier];}
+static BOOL ContainsNativeView(NSView *view,NSString *name){if([NSStringFromClass(view.class)containsString:name])return YES;for(NSView *child in view.subviews)if(ContainsNativeView(child,name))return YES;return NO;}
+static void SeedStylePreview(void){
+    NSString *identifier=NSBundle.mainBundle.bundleIdentifier;
+    if(![identifier hasPrefix:@"local.widgetify.stylepreview."])exit(78);
+    NSURL *support=[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
+    NSString *boundary=[@"/Containers/" stringByAppendingFormat:@"%@/",identifier];
+    if(![support.path containsString:boundary])exit(78);
+    NSDictionary *seed=[NSDictionary dictionaryWithContentsOfURL:[NSBundle.mainBundle URLForResource:@"StylePreview" withExtension:@"plist"]];
+    if(!seed)exit(78);
+    if([[NSUserDefaults.standardUserDefaults stringForKey:@"WidgetifyPreviewSeed"]isEqual:seed[@"revision"]])return;
+    [NSUserDefaults.standardUserDefaults setPersistentDomain:seed[@"preferences"] forName:identifier];
+    [NSUserDefaults.standardUserDefaults setObject:seed[@"revision"] forKey:@"WidgetifyPreviewSeed"];
+    NSURL *folder=[support URLByAppendingPathComponent:@"Widgetify" isDirectory:YES];
+    if(![NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:nil error:NULL])exit(78);
+    if(![seed[@"layoutData"]writeToURL:[folder URLByAppendingPathComponent:@"autosaved.widgetlist4"] options:NSDataWritingAtomic error:NULL])exit(78);
+    [NSUserDefaults.standardUserDefaults synchronize];
+}
+
 static NSString *const TimeKey=@"custom.enhancements.water.times";
 static NSString *const EnabledKey=@"custom.enhancements.water.enabled";
 static NSString *const HideKey=@"custom.enhancements.originalFolders.hideDesktop";
@@ -39,6 +61,7 @@ static NSString *const FiredKey=@"custom.enhancements.water.deliveredSlots";
 + (instancetype)shared{static id s;static dispatch_once_t once;dispatch_once(&once,^{s=[self new];});return s;}
 - (void)install{
     if(!NSApp.isRunning)return;
+    if(IsStylePreview()) { [self installStylePreview]; return; }
     if(!self.initialized){
         self.initialized=YES;self.folders=[OriginalFolderBridge new];self.fired=[NSMutableOrderedSet orderedSetWithArray:[NSUserDefaults.standardUserDefaults arrayForKey:FiredKey]?:@[]];
         self.contexts=[NSMutableDictionary new];self.windows=[NSMapTable strongToWeakObjectsMapTable];self.lastCheck=NSDate.date;
@@ -85,7 +108,30 @@ static NSString *const FiredKey=@"custom.enhancements.water.deliveredSlots";
         for(NSArray*spec in @[@[@"喝水组件设置…",@"openWater:"],@[@"文件夹组件设置…",@"openFolders:"],@[@"快捷启动分类设置…",@"openShortcuts:"]]){NSMenuItem*item=[[NSMenuItem alloc]initWithTitle:spec[0] action:NSSelectorFromString(spec[1]) keyEquivalent:@""];item.target=self;item.tag=[spec[1]isEqual:@"openWater:"]?90740:([spec[1]isEqual:@"openShortcuts:"]?90742:90741);[m insertItem:item atIndex:MIN(2,m.numberOfItems)];}
     }
 }
-- (NSView*)settingsForComponent:(NSDictionary*)context window:(NSWindow*)window{return WidgetifySettingsView(context,window,self.folders,self);}
+- (void)installStylePreview{
+    if(!self.initialized){self.initialized=YES;WidgetifyInstallComponentIntegration(self);}
+    for(NSWindow *window in [NSApp.windows copy]){
+        NSDictionary *context=WidgetifyContext(window);
+        if([context[@"kind"]isEqual:@"shortcuts"] && !IsReferencePreview(context[@"id"]))WidgetifyUpdateInlineShortcuts((__bridge void*)window,(__bridge void*)context);
+    }
+    NSMenu *menu=NSApp.mainMenu.numberOfItems?[NSApp.mainMenu itemAtIndex:0].submenu:nil;
+    if(menu && ![menu itemWithTag:90801]){
+        NSArray *specs=@[@[@"查看分类预览",@"focusPreview:"],@[@"查看原快捷启动对照",@"focusReference:"],@[@"查看翻译组件对照",@"focusTranslation:"]];
+        NSInteger tag=90801;
+        for(NSArray *spec in specs){NSMenuItem *item=[[NSMenuItem alloc]initWithTitle:spec[0] action:NSSelectorFromString(spec[1]) keyEquivalent:@""];item.target=self;item.tag=tag++;[menu insertItem:item atIndex:MIN(2,menu.numberOfItems)];}
+    }
+}
+- (void)focusPreviewKind:(NSInteger)kind{
+    for(NSWindow *window in [NSApp.windows copy]){
+        NSDictionary *context=WidgetifyContext(window);
+        BOOL match=kind==2?ContainsNativeView(window.contentView,@"GenericWidgetifyViewCS2_21TranslationController"):[context[@"kind"]isEqual:@"shortcuts"] && IsReferencePreview(context[@"id"])==(kind==1);
+        if(match){[window makeKeyAndOrderFront:nil];[NSApp activateIgnoringOtherApps:YES];return;}
+    }
+}
+- (void)focusPreview:(id)sender{[self focusPreviewKind:0];}
+- (void)focusReference:(id)sender{[self focusPreviewKind:1];}
+- (void)focusTranslation:(id)sender{[self focusPreviewKind:2];}
+- (NSView*)settingsForComponent:(NSDictionary*)context window:(NSWindow*)window{if(IsStylePreview() && IsReferencePreview(context[@"id"]))return nil;return WidgetifySettingsView(context,window,self.folders,self);}
 - (void)folderOptionsChanged{if(!self.quitting)[self.folders synchronizeWithHiding:[NSUserDefaults.standardUserDefaults boolForKey:HideKey]];}
 - (void)terminate:(id)sender{self.quitting=YES;[self dismiss:nil];[self.folders restoreAll];}
 - (void)openKind:(NSString*)kind{
@@ -143,7 +189,7 @@ static NSString *const FiredKey=@"custom.enhancements.water.deliveredSlots";
 }
 @end
 #ifndef ENHANCEMENTS_TEST
-__attribute__((constructor))static void LoadEnhancements(void){@autoreleasepool{WidgetifyInstallDirectoryReferences();}dispatch_async(dispatch_get_main_queue(),^{NSTimer*t=[NSTimer timerWithTimeInterval:1 repeats:YES block:^(NSTimer*t){[[WidgetifyEnhancements shared]install];}];[NSRunLoop.mainRunLoop addTimer:t forMode:NSRunLoopCommonModes];});}
+__attribute__((constructor))static void LoadEnhancements(void){@autoreleasepool{if(IsStylePreview())SeedStylePreview();else WidgetifyInstallDirectoryReferences();}dispatch_async(dispatch_get_main_queue(),^{NSTimer*t=[NSTimer timerWithTimeInterval:1 repeats:YES block:^(NSTimer*t){[[WidgetifyEnhancements shared]install];}];[NSRunLoop.mainRunLoop addTimer:t forMode:NSRunLoopCommonModes];});}
 #else
 extern void WidgetifyTestCategories(void);
 int main(void){@autoreleasepool{

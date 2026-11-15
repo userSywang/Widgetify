@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ObjectiveC
 
 private struct LaunchGroup: Codable, Identifiable, Equatable {
     var id = UUID().uuidString
@@ -151,6 +152,7 @@ private final class InlineLaunchModel: ObservableObject {
     @Published var selected: String
     @Published var ink = NSColor.white
     @Published var fixed = false
+    @Published var contentWidth: CGFloat = 344
     private var observer: NSObjectProtocol?
     init(id: String, window: NSWindow) {
         self.id = id; self.window = window; categories = loadCategories(id)
@@ -160,6 +162,11 @@ private final class InlineLaunchModel: ObservableObject {
     }
     deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
     var visibleApps: [String] { filteredApps(apps, categories: categories, selected: selected) }
+    var narrow: Bool { contentWidth < 260 }
+    var categoryWidth: CGFloat {
+        let ideal = (title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13)]).width + 20
+        return min(ideal, max(34, contentWidth - 32 - (narrow ? 0 : 40) - 48 - (narrow ? 16 : 24)))
+    }
     var title: String { selected == allLaunchApps ? "全部应用" : selected == unassignedLaunchApps ? "未分类" : categories.groups.first { $0.id == selected }?.name ?? "全部应用" }
     func select(_ value: String) {
         selected = value
@@ -191,21 +198,41 @@ private struct LaunchDragHandle: NSViewRepresentable {
     func makeNSView(context: Context) -> LaunchDragView { LaunchDragView() }
     func updateNSView(_ view: LaunchDragView, context: Context) { view.fixed = fixed }
 }
+// Adapted from the verified native press/material behavior. Layout values for
+// the new header remain preview parameters, not recovered vendor defaults.
+private struct ShortcutActionStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.font(.system(size: 12, weight: .medium))
+            .padding(.horizontal, 12).padding(.vertical, 5)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.1), lineWidth: 1.5))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.black.opacity(configuration.isPressed ? 0.2 : 0)))
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .opacity(enabled ? 1 : 0.5)
+            .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+}
+private struct ShortcutIconPressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.scaleEffect(configuration.isPressed ? 0.85 : 1)
+            .animation(reduceMotion ? nil : (configuration.isPressed ? .easeInOut(duration: 0.1) : .spring(response: 0.2, dampingFraction: 0.5)), value: configuration.isPressed)
+    }
+}
 private struct LaunchIcon: View {
     let url: String
     let compact: Bool
-    @State private var hovered = false
     let action: () -> Void
     var body: some View {
         Button(action: action) {
             VStack(spacing: 4) {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: URL(string: url)?.path ?? ""))
                     .resizable().interpolation(.high).frame(width: compact ? 32 : 42, height: compact ? 32 : 42)
-                    .scaleEffect(hovered ? 1.08 : 1)
                 if !compact { Text(appTitle(url)).font(.system(size: 10)).lineLimit(1).frame(maxWidth: .infinity) }
             }.frame(maxWidth: .infinity).frame(height: compact ? 38 : 64).contentShape(Rectangle())
-        }.buttonStyle(.plain).help(appTitle(url)).accessibilityLabel("启动\(appTitle(url))")
-            .onHover { hovered = $0 }.animation(.easeOut(duration: 0.15), value: hovered)
+        }.buttonStyle(ShortcutIconPressStyle()).help(appTitle(url)).accessibilityLabel("启动\(appTitle(url))")
     }
 }
 private struct InlineLaunchCard: View {
@@ -215,6 +242,7 @@ private struct InlineLaunchCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
+                if !model.narrow { Text("分类：").font(.system(size: 13)).fixedSize() }
                 Menu {
                     categoryButton("全部应用", allLaunchApps)
                     Divider()
@@ -223,14 +251,10 @@ private struct InlineLaunchCard: View {
                     Divider()
                     Button("管理分类…") { model.settings() }
                 } label: {
-                    HStack(spacing: 6) { Image(systemName: "square.grid.2x2"); Text(model.title).lineLimit(1); Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)) }
-                        .font(.system(size: 11, weight: .medium)).padding(.horizontal, 10).frame(height: 26)
-                        .background(ink.opacity(0.09), in: Capsule())
-                }.menuStyle(.borderlessButton).fixedSize().accessibilityLabel("切换应用分类：\(model.title)")
+                    Text(model.title).font(.system(size: 13)).lineLimit(1)
+                }.menuStyle(.borderlessButton).frame(width: model.categoryWidth, alignment: .leading).help(model.title).accessibilityLabel("切换应用分类：\(model.title)")
                 LaunchDragHandle(fixed: model.fixed).frame(maxWidth: .infinity).frame(height: 26).accessibilityHidden(true)
-                Text("\(model.visibleApps.count)").font(.system(size: 10)).monospacedDigit().foregroundColor(ink.opacity(0.5)).accessibilityLabel("\(model.visibleApps.count) 个应用")
-                Button { model.settings() } label: { Image(systemName: "slider.horizontal.3").font(.system(size: 12)).frame(width: 26, height: 26).background(ink.opacity(0.07), in: Circle()) }
-                    .buttonStyle(.plain).help("组件设置与分类").accessibilityLabel("组件设置与分类")
+                Button("管理") { model.settings() }.buttonStyle(ShortcutActionStyle()).fixedSize().help("组件设置与分类").accessibilityLabel("组件设置与分类")
             }
             if model.visibleApps.isEmpty {
                 VStack(spacing: 7) {
@@ -245,7 +269,7 @@ private struct InlineLaunchCard: View {
                     }.padding(.top, 1).padding(.bottom, 3)
                 }
             }
-        }.padding(.horizontal, 18).padding(.vertical, 12)
+        }.padding(16)
             .foregroundColor(ink).frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: model.selected)
     }
@@ -253,38 +277,55 @@ private struct InlineLaunchCard: View {
         Button { model.select(id) } label: { if model.selected == id { Label(title, systemImage: "checkmark") } else { Text(title) } }
     }
 }
-// Hide only the native app grid. The host still draws its own background,
-// including its shared color, opacity, image and blur implementation.
-private func hideOriginalGrid(_ view: NSView) {
-    if view is NSScrollView { view.alphaValue = 0; return }
-    for child in view.subviews { hideOriginalGrid(child) }
+// Attach to the native content surface, inside its monochrome processing
+// hierarchy. Never replace/reparent the window's root or reproduce its backdrop.
+private func shortcutSurface(_ view: NSView) -> NSView? {
+    if NSStringFromClass(type(of: view)) == "Widgetify.WidgetMonochromeHostingView" { return view }
+    for child in view.subviews { if let surface = shortcutSurface(child) { return surface } }
+    return nil
 }
-private final class InlineLaunchContainer: NSView {
-    let source: NSView
+private func hideOriginalGrid(_ view: NSView, excluding presentation: NSView) {
+    if view === presentation { return }
+    if view is NSScrollView { view.alphaValue = 0; return }
+    for child in view.subviews { hideOriginalGrid(child, excluding: presentation) }
+}
+private final class InlineLaunchAttachment: NSObject {
+    weak var source: NSView?
+    weak var surface: NSView?
     let model: InlineLaunchModel
     let presentation: NSHostingView<InlineLaunchCard>
-    init(source: NSView, id: String, window: NSWindow, theme: NSDictionary) {
-        self.source = source; model = InlineLaunchModel(id: id, window: window)
-        model.refresh(theme); presentation = NSHostingView(rootView: InlineLaunchCard(model: model))
-        super.init(frame: source.frame)
-        // Keep the native hosting view and controller alive, at the same bounds,
-        // for native settings, app picking, size/lock/pin and persistence.
-        source.alphaValue = 1
-        hideOriginalGrid(source)
-        addSubview(source); addSubview(presentation)
-        autoresizingMask = [.width, .height]
+    init(source: NSView, surface: NSView, id: String, window: NSWindow, theme: NSDictionary) {
+        self.source = source; self.surface = surface
+        model = InlineLaunchModel(id: id, window: window)
+        model.refresh(theme); model.contentWidth = surface.bounds.width; presentation = NSHostingView(rootView: InlineLaunchCard(model: model))
+        super.init()
+        presentation.autoresizingMask = [.width, .height]
+        presentation.frame = surface.bounds
+        surface.addSubview(presentation, positioned: .above, relativeTo: nil)
+        hideOriginalGrid(source, excluding: presentation)
     }
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    override func layout() { super.layout(); source.frame = bounds; presentation.frame = bounds }
-    func refresh(_ theme: NSDictionary) { model.refresh(theme); hideOriginalGrid(source) }
+    func refresh(_ theme: NSDictionary) {
+        guard let source, let surface else { return }
+        model.refresh(theme)
+        if model.contentWidth != surface.bounds.width { model.contentWidth = surface.bounds.width }
+        if presentation.superview !== surface { surface.addSubview(presentation, positioned: .above, relativeTo: nil) }
+        presentation.frame = surface.bounds
+        hideOriginalGrid(source, excluding: presentation)
+    }
 }
+private var inlineAttachmentKey: UInt8 = 0
 @_cdecl("WidgetifyUpdateInlineShortcuts")
 public func updateInlineShortcuts(_ windowPointer: UnsafeMutableRawPointer, _ contextPointer: UnsafeMutableRawPointer) {
     let window = Unmanaged<NSWindow>.fromOpaque(windowPointer).takeUnretainedValue()
     let theme = Unmanaged<NSDictionary>.fromOpaque(contextPointer).takeUnretainedValue()
     guard let id = theme["id"] as? String, let source = window.contentView else { return }
-    if let container = source as? InlineLaunchContainer { container.refresh(theme); return }
-    let container = InlineLaunchContainer(source: source, id: id, window: window, theme: theme)
-    window.contentView = container
-    container.needsLayout = true; container.layoutSubtreeIfNeeded()
+    if let attachment = objc_getAssociatedObject(source, &inlineAttachmentKey) as? InlineLaunchAttachment {
+        if shortcutSurface(source) === attachment.surface { attachment.refresh(theme); return }
+        attachment.presentation.removeFromSuperview()
+        objc_setAssociatedObject(source, &inlineAttachmentKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
+    // Unsupported native hierarchy: leave the actual component untouched.
+    guard let surface = shortcutSurface(source) else { return }
+    let attachment = InlineLaunchAttachment(source: source, surface: surface, id: id, window: window, theme: theme)
+    objc_setAssociatedObject(source, &inlineAttachmentKey, attachment, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
 }

@@ -29,7 +29,7 @@ private func scalar<T>(_ value: Any?, as: T.Type, depth: Int = 0) -> T? {
 private func reflectedController(_ value: Any, depth: Int = 0, budget: inout Int) -> Any? {
     guard depth < 8, budget > 0 else { return nil }; budget -= 1
     let mirror = Mirror(reflecting: value), name = String(reflecting: Swift.type(of: value))
-    if mirror.displayStyle == .class && [".WaterController", ".DocumentController", ".DisplayController"].contains(where: { name.hasSuffix($0) }) { return value }
+    if mirror.displayStyle == .class && [".WaterController", ".DocumentController", ".AppController", ".WidgetifyController"].contains(where: { name.hasSuffix($0) }) { return value }
     guard mirror.displayStyle != .collection && mirror.displayStyle != .dictionary else { return nil }
     for child in mirror.children where child.label != "widget" {
         if let result = reflectedController(child.value, depth: depth + 1, budget: &budget) { return result }

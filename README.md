@@ -2,7 +2,7 @@
 
 本仓库保存本项目实际编写的修改工具与增强功能源码，**不是 Widgetify 原厂完整源码**。原厂 Swift/SwiftUI/AppKit 程序、第三方库及资源仍是编译后的成品，没有被恢复成完整可编辑工程。
 
-本次发布：**v0.2.10**。正式版修复喝水提醒背景透明与圆角，包含已确认的快捷启动分类样式。灵感作为单独的原生预览附件发布，尚未接入正式版组件列表；本地现用安装版不会因发布而自动替换。
+当前已发布：**v0.2.10**。本地 **v0.2.11 候选版**已完成灵感正式接入、独立私人 Git 与迁移演练，等待用户确认具体安装包后安装和发布。候选版中灵感随主程序启动，可由应用菜单“灵感组件…”定位，不再需要独立运行旧灵感预览。
 
 ## 当前功能
 
@@ -25,13 +25,28 @@
 需要 macOS、Xcode 命令行工具、Python 3，以及原版 Widgetify 4.55（216）或校验通过的本项目定制版。基础程序不放入源码仓库。
 
 ```sh
-python3 scripts/build.py --base-app "/Applications/Widgetify 0.2.9.app" --output dist
+python3 scripts/build.py --base-app "/Applications/Widgetify 0.2.9.app" --output dist \
+  --git-executable /path/to/git-2.50.1/git \
+  --git-source /path/to/git-2.50.1.tar.xz
 ```
 
 构建脚本校验原版 SHA-256，或校验定制版的原始程序代码指纹，在独立输出目录制作副本，不覆盖基础程序。
 
+## 灵感正式接入
+
+首次启动在原布局中新增一个灵感宿主，保留原有组件；应用菜单“灵感组件…”可定位，组件内设置可隐藏，菜单可恢复显示。使用原生快捷启动容器承载自有界面，沿用背景和单色处理；没有恢复或改写原厂组件库源码，原厂组件选择器未新增灵感条目。若通过原界面重置了组件布局，应用菜单可安排下次启动重新添加。
+
+记录位于正式应用独立容器的 `Application Support/Inspiration/`，其中 `LocalHistory/` 是独立的本地私人 Git 仓库，不连接远端、不随源码推送。旧预览的记录、两类草稿及 Git 对象历史通过本地迁移工具保留。迁移拒绝覆盖已有正式记录，源目录不删除。
+
+构建需要从上游 Git 2.50.1 源码构建的本地工具（构建参数与许可证说明见[灵感文档](docs/灵感本地记录与Git.md)）。Git 子程序继承应用限制，完整上游源码应随 Release 提供。
+
 ## 源码范围
 
+- `src/InspirationIntegration.swift`：首次加入原生灵感宿主、布局备份与去重。
+- `src/InspirationPresentation.swift`：灵感记录、草稿、回放与组件内弹层。
+- `src/InspirationHistory.swift`：独立私人 Git 快照与历史读取。
+- `scripts/migrate_inspiration.py`：记录及 Git 历史的无覆盖迁移。
+- `scripts/install_local.py`：安装计划、备份、固定文件指纹核对和迁移。
 - `src/WaterPresentation.swift`：行式提醒设置、实时组件画面与两种提醒布局。
 - `src/Enhancements.m`：组件提醒调度、提醒窗口、正常退出恢复与导航。
 - `src/ComponentIntegration.m`：原设置弹层集成与原卡片导入接口。

@@ -25,6 +25,11 @@ NSDictionary *WidgetifyContext(NSWindow *window){
 }
 - (void)selectTab:(id)sender{self.customSelected=self.tabs.selectedSegment==1;self.original.hidden=self.customSelected;self.extension.hidden=!self.customSelected;self.needsLayout=YES;}
 @end
+BOOL WidgetifyIsInspirationComponent(NSString *identifier){
+    if(!identifier)return NO;
+    if([NSBundle.mainBundle.infoDictionary[@"WidgetifyInspirationPreviewIDs"]containsObject:identifier])return YES;
+    return [NSBundle.mainBundle.infoDictionary[@"WidgetifyInspirationEnabled"]boolValue] && [identifier isEqual:@"d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1"];
+}
 static id Provider;
 static char ContainerKey;
 static void(*OriginalShow)(id,SEL,NSRect,NSView *,NSRectEdge);
@@ -110,7 +115,7 @@ __attribute__((constructor)) static void InstallCategoryMenu(void){dispatch_asyn
     [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskRightMouseDown handler:^NSEvent*(NSEvent *event){
         NSDictionary *context=WidgetifyContext(event.window);
         if([context[@"kind"]isEqual:@"shortcuts"]){
-            if([NSBundle.mainBundle.infoDictionary[@"WidgetifyInspirationPreviewIDs"]containsObject:context[@"id"]])WidgetifyShowInspirationSettings((__bridge void*)event.window);
+            if(WidgetifyIsInspirationComponent(context[@"id"]))WidgetifyShowInspirationSettings((__bridge void*)event.window);
             else WidgetifyOpenOriginalSettings(event.window);return nil;}
         return event;
     }];

@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from patch_binary import patch, arm64_slice, validate_custom_base
 import struct
+from inspiration_build_support import bundle_git, integration_seed
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -36,6 +37,9 @@ def embed(executable):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--base-app', type=Path, required=True)
+    parser.add_argument('--git-executable',type=Path,required=True)
+    parser.add_argument('--git-source',type=Path,required=True)
+    parser.add_argument('--integration-preview',action='store_true',help='Run production integration in an isolated test container')
     parser.add_argument('--output', type=Path, default=ROOT/'dist')
     args = parser.parse_args()
     version = (ROOT/'VERSION').read_text().strip()
@@ -52,11 +56,18 @@ def main():
     run('ditto', args.base_app, app)
     changes = patch(app/'Contents/MacOS/Widgetify') if is_original else [{'base':'verified customization; original binary changes retained'}]
     info = base_info.copy()
-    info.update(CFBundleIdentifier='local.widgetify.custom', CFBundleName='Widgetify', CFBundleDisplayName='Widgetify '+version, CFBundleShortVersionString=version, CFBundleVersion='216.'+'.'.join(version.split('.')[1:]))
+    info.update(CFBundleIdentifier='local.widgetify.custom', CFBundleName='Widgetify', CFBundleDisplayName='Widgetify '+version, CFBundleShortVersionString=version, CFBundleVersion='216.'+'.'.join(version.split('.')[1:]),WidgetifyInspirationEnabled=True)
+    if args.integration_preview:
+        info.update(CFBundleIdentifier='local.widgetify.stylepreview.integration.v0211',CFBundleDisplayName='Widgetify 正式接入预览',WidgetifyStylePreview=False,WidgetifyIntegrationTest=True,WidgetifyPreviewUseMainScreen=True)
+        (app/'Contents/Resources/StylePreview.plist').write_bytes(plistlib.dumps(integration_seed(version)))
+    for resource in ['InspirationSample.json']:
+        file=app/'Contents/Resources'/resource
+        if file.exists():file.unlink()
     (app/'Contents/Info.plist').write_bytes(plistlib.dumps(info))
     result = subprocess.run(['codesign', '-d', '--entitlements', ':-', str(args.base_app)], check=True, capture_output=True)
     entitlements = plistlib.loads(result.stdout)
     entitlements = {k:v for k,v in entitlements.items() if k not in ('com.apple.application-identifier',) and not k.startswith('com.apple.developer.')}
+    if args.integration_preview:entitlements={'com.apple.security.app-sandbox':True}
     entitlements_path = args.output/'entitlements.plist'
     entitlements_path.write_bytes(plistlib.dumps(entitlements))
     source = ROOT/'src/Enhancements.m'
@@ -65,10 +76,13 @@ def main():
             raise ValueError('Enhancement source is missing')
         module = app/'Contents/Frameworks/WidgetifyEnhancements.dylib'
         context_module = app/'Contents/Frameworks/WidgetifyContext.dylib'
-        run('xcrun','swiftc','-target','arm64-apple-macos12.0','-emit-library','-parse-as-library',ROOT/'src/WidgetContext.swift',ROOT/'src/WaterPresentation.swift',ROOT/'src/ShortcutCategories.swift',ROOT/'src/InspirationPresentation.swift',ROOT/'src/InspirationHistory.swift','-o',context_module,'-Xlinker','-install_name','-Xlinker','@loader_path/WidgetifyContext.dylib')
+        run('xcrun','swiftc','-target','arm64-apple-macos12.0','-emit-library','-parse-as-library',ROOT/'src/WidgetContext.swift',ROOT/'src/WaterPresentation.swift',ROOT/'src/ShortcutCategories.swift',ROOT/'src/InspirationPresentation.swift',ROOT/'src/InspirationHistory.swift',ROOT/'src/InspirationIntegration.swift','-o',context_module,'-Xlinker','-install_name','-Xlinker','@loader_path/WidgetifyContext.dylib')
         run('xcrun','clang','-arch','arm64','-mmacosx-version-min=12.0','-fobjc-arc','-fblocks','-dynamiclib','-framework','AppKit','-framework','UserNotifications','-framework','CoreGraphics','-framework','QuartzCore', source, ROOT/'src/OriginalFolderBridge.m',ROOT/'src/ComponentIntegration.m',ROOT/'src/ComponentSettings.m',ROOT/'src/ReminderSchedule.m',ROOT/'src/DirectoryReferences.m',context_module, '-o', module, '-install_name','@rpath/WidgetifyEnhancements.dylib')
         embed(app/'Contents/MacOS/Widgetify')
+    helper,child_entitlements=bundle_git(app,args.output,args.git_executable,args.git_source)
     run('codesign','--force','--deep','--sign','-','--entitlements',entitlements_path,app)
+    run('codesign','--force','--sign','-','--entitlements',child_entitlements,helper)
+    run('codesign','--force','--sign','-','--entitlements',entitlements_path,app)
     run('codesign','--verify','--deep','--strict',app)
     (args.output/'patch-manifest.json').write_text(json.dumps(changes,indent=2)+'\n')
     archive = args.output/('Widgetify-'+version+'-macOS-arm64.zip')

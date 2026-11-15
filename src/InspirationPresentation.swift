@@ -176,8 +176,9 @@ private final class InspirationModel: ObservableObject {
     }
     init(window: NSWindow) {
         self.window = window
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("InspirationPreview", isDirectory: true)
-        let seed = Bundle.main.url(forResource: "InspirationSample", withExtension: "json").flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode([InspirationEntry].self, from: $0) } ?? []
+        let preview = Bundle.main.object(forInfoDictionaryKey: "WidgetifyStylePreview") as? Bool == true
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(preview ? "InspirationPreview" : "Inspiration", isDirectory: true)
+        let seed = preview ? Bundle.main.url(forResource: "InspirationSample", withExtension: "json").flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode([InspirationEntry].self, from: $0) } ?? [] : []
         store = InspirationStore(directory: directory, seed: seed)
         history = InspirationHistory(directory: directory.appendingPathComponent("LocalHistory", isDirectory: true))
     }
@@ -277,11 +278,18 @@ private struct InspirationSettings: View {
                 NSApp.sendAction(action, to: item.target, from: item)
             }
             Divider()
+            if Bundle.main.object(forInfoDictionaryKey: "WidgetifyInspirationEnabled") as? Bool == true {
+                Button("隐藏灵感组件") {
+                    model.route = nil; UserDefaults.standard.set(true, forKey: "custom.inspiration.hidden")
+                    DispatchQueue.main.async { model.window?.orderOut(nil) }
+                }
+                Text("可从应用菜单的“灵感组件”重新显示。").font(.system(size: 11)).foregroundColor(.secondary)
+            }
             Text("本地保存").font(.system(size: 13, weight: .medium))
             Text("输入自动暂存。点击保存到 Git，保留当前全部灵感和补充的历史版本。").font(.system(size: 12)).foregroundColor(.secondary)
             HStack {
                 Button("保存到 Git") { model.saveHistory() }.disabled(model.historyBusy || model.store.readOnly)
-                Button("查看历史") { model.route = .init(kind: .history) }
+                Button("查看历史") { model.route = .init(kind: .history) }.disabled(model.historyBusy)
             }
             if !model.historyMessage.isEmpty { Text(model.historyMessage).font(.system(size: 11)).foregroundColor(.secondary) }
             Text("独立私人仓库，仅保存在这台电脑。与软件源码分开，不连接远端仓库。").font(.system(size: 11)).foregroundColor(.secondary)
@@ -343,7 +351,7 @@ private struct InspirationCard: View {
                     Button("查看已归档") { mode = "已归档" }
                     Divider()
                     Button(model.historyBusy ? "正在保存历史…" : "保存到 Git") { model.saveHistory() }.disabled(model.historyBusy || store.readOnly)
-                    Button("查看本地历史…") { model.route = .init(kind: .history) }
+                    Button("查看本地历史…") { model.route = .init(kind: .history) }.disabled(model.historyBusy)
                     Divider(); Button("灵感设置…") { model.route = .init(kind: .settings) }
                 } label: { Image(systemName: "ellipsis").frame(width: 16) }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel("灵感更多操作")
             }.frame(height: 28)
@@ -440,8 +448,9 @@ private final class InspirationAttachment: NSObject {
 }
 private var inspirationAttachmentKey: UInt8 = 0
 @_cdecl("WidgetifyUpdateInspirationPreview") public func updateInspirationPreview(_ windowPointer: UnsafeMutableRawPointer, _ contextPointer: UnsafeMutableRawPointer) {
-    guard Bundle.main.object(forInfoDictionaryKey: "WidgetifyStylePreview") as? Bool == true,
-          Bundle.main.bundleIdentifier?.hasPrefix("local.widgetify.stylepreview.inspiration.") == true else { return }
+    let preview = Bundle.main.object(forInfoDictionaryKey: "WidgetifyStylePreview") as? Bool == true
+    let enabled = Bundle.main.object(forInfoDictionaryKey: "WidgetifyInspirationEnabled") as? Bool == true
+    guard enabled || (preview && Bundle.main.bundleIdentifier?.hasPrefix("local.widgetify.stylepreview.inspiration.") == true) else { return }
     let window = Unmanaged<NSWindow>.fromOpaque(windowPointer).takeUnretainedValue()
     let theme = Unmanaged<NSDictionary>.fromOpaque(contextPointer).takeUnretainedValue()
     guard let source = window.contentView else { return }

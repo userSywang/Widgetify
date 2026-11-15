@@ -6,6 +6,7 @@ extern void *WidgetifyCreateWaterSurface(BOOL,void *);
 extern void WidgetifyUpdateInlineShortcuts(void *,void *);
 extern void WidgetifyUpdateInspirationPreview(void *,void *);
 extern BOOL WidgetifyExportInspirationPreview(void *);
+extern void WidgetifyBootstrapInspiration(void);
 #import "OriginalFolderBridge.h"
 #import "ComponentIntegration.h"
 #import "ComponentSettings.h"
@@ -15,7 +16,8 @@ extern BOOL WidgetifyExportInspirationPreview(void *);
 // A preview has its own signed sandbox/container. Never initialize folder
 // hooks, reminders or production migration in this mode.
 static BOOL IsStylePreview(void){return [NSBundle.mainBundle.infoDictionary[@"WidgetifyStylePreview"]boolValue];}
-static BOOL IsInspirationPreview(NSString *identifier){return [NSBundle.mainBundle.infoDictionary[@"WidgetifyInspirationPreviewIDs"]containsObject:identifier];}
+static BOOL IsIntegrationTest(void){return [NSBundle.mainBundle.infoDictionary[@"WidgetifyIntegrationTest"]boolValue];}
+static BOOL IsInspirationPreview(NSString *identifier){return WidgetifyIsInspirationComponent(identifier);}
 static BOOL IsReferencePreview(NSString *identifier){return [NSBundle.mainBundle.infoDictionary[@"WidgetifyPreviewReferenceIDs"]containsObject:identifier];}
 static BOOL ContainsNativeView(NSView *view,NSString *name){if([NSStringFromClass(view.class)containsString:name])return YES;for(NSView *child in view.subviews)if(ContainsNativeView(child,name))return YES;return NO;}
 static void SeedStylePreview(void){
@@ -78,23 +80,30 @@ static NSString *const FiredKey=@"custom.enhancements.water.deliveredSlots";
     if(!NSApp.isRunning)return;
     if(IsStylePreview()) { [self installStylePreview]; return; }
     if(!self.initialized){
-        self.initialized=YES;self.folders=[OriginalFolderBridge new];self.fired=[NSMutableOrderedSet orderedSetWithArray:[NSUserDefaults.standardUserDefaults arrayForKey:FiredKey]?:@[]];
+        self.initialized=YES;if(!IsIntegrationTest())self.folders=[OriginalFolderBridge new];self.fired=[NSMutableOrderedSet orderedSetWithArray:[NSUserDefaults.standardUserDefaults arrayForKey:FiredKey]?:@[]];
         self.contexts=[NSMutableDictionary new];self.windows=[NSMapTable strongToWeakObjectsMapTable];self.lastCheck=NSDate.date;
         WidgetifyInstallComponentIntegration(self);
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(terminate:) name:NSApplicationWillTerminateNotification object:nil];
         // Retire requests from the earlier global scheduler; component settings
         // now own their schedules and the app-native presentation.
-        [UNUserNotificationCenter.currentNotificationCenter getPendingNotificationRequestsWithCompletionHandler:^(NSArray<UNNotificationRequest*>*requests){NSMutableArray*ids=[NSMutableArray new];for(UNNotificationRequest*r in requests)if([r.identifier hasPrefix:@"custom.water."])[ids addObject:r.identifier];[UNUserNotificationCenter.currentNotificationCenter removePendingNotificationRequestsWithIdentifiers:ids];}];
+        if(!IsIntegrationTest())[UNUserNotificationCenter.currentNotificationCenter getPendingNotificationRequestsWithCompletionHandler:^(NSArray<UNNotificationRequest*>*requests){NSMutableArray*ids=[NSMutableArray new];for(UNNotificationRequest*r in requests)if([r.identifier hasPrefix:@"custom.water."])[ids addObject:r.identifier];[UNUserNotificationCenter.currentNotificationCenter removePendingNotificationRequestsWithIdentifiers:ids];}];
     }
     if(self.quitting)return;
     NSDate *now=NSDate.date;
     if(!self.lastScan||[now timeIntervalSinceDate:self.lastScan]>=2){
+        if(IsIntegrationTest()){
+            NSMutableArray *states=[NSMutableArray new];for(NSWindow *window in NSApp.windows){NSMutableArray *views=[NSMutableArray new];for(NSView *view in window.contentView.subviews)[views addObject:NSStringFromClass(view.class)];[states addObject:@{@"class":NSStringFromClass(window.class),@"visible":@(window.visible),@"key":@(window.keyWindow),@"level":@(window.level),@"views":views}];}
+            NSURL *file=[[[NSFileManager.defaultManager URLsForDirectory:NSCachesDirectory inDomains:NSUserDomainMask]firstObject]URLByAppendingPathComponent:@"inspiration-windows.json"];[[NSJSONSerialization dataWithJSONObject:states options:NSJSONWritingPrettyPrinted error:NULL]writeToURL:file atomically:YES];
+        }
         NSMutableSet *alive=[NSMutableSet new];
         NSURL *snapshotURL=[[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject URLByAppendingPathComponent:@"Widgetify/autosaved.widgetlist4"];
         NSData *snapshotData=[NSData dataWithContentsOfURL:snapshotURL];id snapshot=snapshotData?[NSJSONSerialization JSONObjectWithData:snapshotData options:0 error:NULL]:nil;
         NSSet *active=[snapshot isKindOfClass:NSArray.class]?[NSSet setWithArray:[snapshot valueForKey:@"id"]]:nil;
         for(NSWindow*w in NSApp.windows){NSDictionary*c=WidgetifyContext(w);if(!c)continue;NSString*i=c[@"id"];if(active && ![active containsObject:i])continue;[alive addObject:i];self.contexts[i]=c;[self.windows setObject:w forKey:i];
-            if([c[@"kind"]isEqual:@"shortcuts"])WidgetifyUpdateInlineShortcuts((__bridge void*)w,(__bridge void*)c);
+            if(IsInspirationPreview(i)){
+                WidgetifyUpdateInspirationPreview((__bridge void*)w,(__bridge void*)c);
+                if([NSUserDefaults.standardUserDefaults boolForKey:@"custom.inspiration.hidden"])[w orderOut:nil];
+            }else if([c[@"kind"]isEqual:@"shortcuts"])WidgetifyUpdateInlineShortcuts((__bridge void*)w,(__bridge void*)c);
             if([c[@"kind"]isEqual:@"water"] && ![NSUserDefaults.standardUserDefaults objectForKey:WidgetifyWaterKey(i)]){
                 NSMutableDictionary*config=[WidgetifyWaterConfiguration(i)mutableCopy];NSString*t=[NSUserDefaults.standardUserDefaults stringForKey:TimeKey];if(t)config[@"times"]=t;config[@"enabled"]=@([NSUserDefaults.standardUserDefaults boolForKey:EnabledKey]);[NSUserDefaults.standardUserDefaults setObject:config forKey:WidgetifyWaterKey(i)];
             }
@@ -119,6 +128,9 @@ static NSString *const FiredKey=@"custom.enhancements.water.deliveredSlots";
     // Optional navigation only: it opens/focuses the actual component, never an
     // independent enhancement settings window.
     NSMenu*m=NSApp.mainMenu.numberOfItems?[NSApp.mainMenu itemAtIndex:0].submenu:nil;
+    if(m && [NSBundle.mainBundle.infoDictionary[@"WidgetifyInspirationEnabled"]boolValue] && ![m itemWithTag:90743]){
+        NSMenuItem *item=[[NSMenuItem alloc]initWithTitle:@"灵感组件…" action:@selector(openInspiration:) keyEquivalent:@""];item.tag=90743;item.target=self;[m insertItem:item atIndex:MIN(2,m.numberOfItems)];
+    }
     if(m && ![m itemWithTag:90740]){
         for(NSArray*spec in @[@[@"喝水组件设置…",@"openWater:"],@[@"文件夹组件设置…",@"openFolders:"],@[@"快捷启动分类设置…",@"openShortcuts:"]]){NSMenuItem*item=[[NSMenuItem alloc]initWithTitle:spec[0] action:NSSelectorFromString(spec[1]) keyEquivalent:@""];item.target=self;item.tag=[spec[1]isEqual:@"openWater:"]?90740:([spec[1]isEqual:@"openShortcuts:"]?90742:90741);[m insertItem:item atIndex:MIN(2,m.numberOfItems)];}
     }
@@ -151,11 +163,22 @@ static NSString *const FiredKey=@"custom.enhancements.water.deliveredSlots";
 - (void)focusPreview:(id)sender{[self focusPreviewKind:0];}
 - (void)focusReference:(id)sender{[self focusPreviewKind:1];}
 - (void)focusTranslation:(id)sender{[self focusPreviewKind:2];}
-- (NSView*)settingsForComponent:(NSDictionary*)context window:(NSWindow*)window{if(IsStylePreview() && IsReferencePreview(context[@"id"]))return nil;return WidgetifySettingsView(context,window,self.folders,self);}
+- (NSView*)settingsForComponent:(NSDictionary*)context window:(NSWindow*)window{if(IsInspirationPreview(context[@"id"]) || (IsStylePreview() && IsReferencePreview(context[@"id"])))return nil;return WidgetifySettingsView(context,window,self.folders,self);}
 - (void)folderOptionsChanged{if(!self.quitting)[self.folders synchronizeWithHiding:[NSUserDefaults.standardUserDefaults boolForKey:HideKey]];}
 - (void)terminate:(id)sender{self.quitting=YES;[self dismiss:nil];[self.folders restoreAll];}
 - (void)openKind:(NSString*)kind{
-    for(NSWindow*w in NSApp.windows){NSDictionary*c=WidgetifyContext(w);if(![c[@"kind"]isEqual:kind])continue;[w makeKeyAndOrderFront:nil];[NSApp activateIgnoringOtherApps:YES];WidgetifyOpenOriginalSettings(w);return;}
+    for(NSWindow*w in NSApp.windows){NSDictionary*c=WidgetifyContext(w);if(![c[@"kind"]isEqual:kind] || IsInspirationPreview(c[@"id"]))continue;[w makeKeyAndOrderFront:nil];[NSApp activateIgnoringOtherApps:YES];WidgetifyOpenOriginalSettings(w);return;}
+}
+- (void)openInspiration:(id)sender{
+    [NSUserDefaults.standardUserDefaults setBool:NO forKey:@"custom.inspiration.hidden"];
+    // Focusing a desktop component should dismiss only the native component gallery,
+    // so it cannot steal focus from the component's anchored editor/popover.
+    for(NSWindow *other in [NSApp.windows copy])if([NSStringFromClass(other.class)isEqual:@"Widgetify.DefWindow"] && ContainsNativeView(other.contentView,@"MainView"))[other orderOut:nil];
+    for(NSWindow *window in [NSApp.windows copy]){NSDictionary *context=WidgetifyContext(window);if(IsInspirationPreview(context[@"id"])){
+        WidgetifyUpdateInspirationPreview((__bridge void*)window,(__bridge void*)context);[NSApp activateIgnoringOtherApps:YES];dispatch_async(dispatch_get_main_queue(),^{[window makeKeyAndOrderFront:nil];});return;
+    }}
+    [NSUserDefaults.standardUserDefaults setBool:YES forKey:@"custom.inspiration.addOnLaunch"];
+    NSAlert *alert=[NSAlert new];alert.messageText=@"添加灵感组件";alert.informativeText=@"关闭并重新打开软件后，灵感组件会出现在桌面。已有记录和其他组件会保留。";[alert addButtonWithTitle:@"好"];[alert runModal];
 }
 - (void)openWater:(id)sender{[self openKind:@"water"];}
 - (void)openShortcuts:(id)sender{[self openKind:@"shortcuts"];}
@@ -202,7 +225,7 @@ static NSString *const FiredKey=@"custom.enhancements.water.deliveredSlots";
 }
 @end
 #ifndef ENHANCEMENTS_TEST
-__attribute__((constructor))static void LoadEnhancements(void){@autoreleasepool{if(IsStylePreview())SeedStylePreview();else WidgetifyInstallDirectoryReferences();}dispatch_async(dispatch_get_main_queue(),^{NSTimer*t=[NSTimer timerWithTimeInterval:1 repeats:YES block:^(NSTimer*t){[[WidgetifyEnhancements shared]install];}];[NSRunLoop.mainRunLoop addTimer:t forMode:NSRunLoopCommonModes];});}
+__attribute__((constructor))static void LoadEnhancements(void){@autoreleasepool{if(IsStylePreview() || IsIntegrationTest())SeedStylePreview();if(!IsStylePreview())WidgetifyBootstrapInspiration();if(!IsStylePreview() && !IsIntegrationTest())WidgetifyInstallDirectoryReferences();}dispatch_async(dispatch_get_main_queue(),^{NSTimer*t=[NSTimer timerWithTimeInterval:1 repeats:YES block:^(NSTimer*t){[[WidgetifyEnhancements shared]install];}];[NSRunLoop.mainRunLoop addTimer:t forMode:NSRunLoopCommonModes];});}
 #else
 extern void WidgetifyTestCategories(void);
 int main(void){@autoreleasepool{

@@ -108,7 +108,7 @@ extern void WidgetifyShowCategoryMenu(void *,void *,void *);
 __attribute__((constructor)) static void InstallCategoryMenu(void){dispatch_async(dispatch_get_main_queue(),^{
     [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskRightMouseDown handler:^NSEvent*(NSEvent *event){
         NSDictionary *context=WidgetifyContext(event.window);
-        if([context[@"kind"]isEqual:@"shortcuts"]){WidgetifyShowCategoryMenu((__bridge void*)context[@"id"],(__bridge void*)event.window,(__bridge void*)event);return nil;}
+        if([context[@"kind"]isEqual:@"shortcuts"]){WidgetifyOpenOriginalSettings(event.window);return nil;}
         return event;
     }];
 });}

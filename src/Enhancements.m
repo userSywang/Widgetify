@@ -2,6 +2,7 @@
 #import <UserNotifications/UserNotifications.h>
 #import <QuartzCore/QuartzCore.h>
 extern void *WidgetifyCreateWaterReminder(void *,void *,void *,void *);
+extern void WidgetifyUpdateInlineShortcuts(void *,void *);
 #import "OriginalFolderBridge.h"
 #import "ComponentIntegration.h"
 #import "ComponentSettings.h"
@@ -55,6 +56,7 @@ static NSString *const FiredKey=@"custom.enhancements.water.deliveredSlots";
         NSData *snapshotData=[NSData dataWithContentsOfURL:snapshotURL];id snapshot=snapshotData?[NSJSONSerialization JSONObjectWithData:snapshotData options:0 error:NULL]:nil;
         NSSet *active=[snapshot isKindOfClass:NSArray.class]?[NSSet setWithArray:[snapshot valueForKey:@"id"]]:nil;
         for(NSWindow*w in NSApp.windows){NSDictionary*c=WidgetifyContext(w);if(!c)continue;NSString*i=c[@"id"];if(active && ![active containsObject:i])continue;[alive addObject:i];self.contexts[i]=c;[self.windows setObject:w forKey:i];
+            if([c[@"kind"]isEqual:@"shortcuts"])WidgetifyUpdateInlineShortcuts((__bridge void*)w,(__bridge void*)c);
             if([c[@"kind"]isEqual:@"water"] && ![NSUserDefaults.standardUserDefaults objectForKey:WidgetifyWaterKey(i)]){
                 NSMutableDictionary*config=[WidgetifyWaterConfiguration(i)mutableCopy];NSString*t=[NSUserDefaults.standardUserDefaults stringForKey:TimeKey];if(t)config[@"times"]=t;config[@"enabled"]=@([NSUserDefaults.standardUserDefaults boolForKey:EnabledKey]);[NSUserDefaults.standardUserDefaults setObject:config forKey:WidgetifyWaterKey(i)];
             }

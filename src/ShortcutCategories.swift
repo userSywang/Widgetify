@@ -1,12 +1,12 @@
 import AppKit
 import SwiftUI
 
-private struct LaunchGroup: Codable, Identifiable {
+private struct LaunchGroup: Codable, Identifiable, Equatable {
     var id = UUID().uuidString
     var name: String
     var apps: [String] = []
 }
-private struct LaunchCategories: Codable {
+private struct LaunchCategories: Codable, Equatable {
     var groups: [LaunchGroup] = []
     mutating func assign(_ app: String, to group: String?) {
         for i in groups.indices { groups[i].apps.removeAll { $0 == app } }
@@ -15,11 +15,12 @@ private struct LaunchCategories: Codable {
 }
 private func categoryKey(_ id: String) -> String { "custom.component.\(id).launchCategories.v1" }
 private func loadCategories(_ id: String) -> LaunchCategories {
-    guard let data = UserDefaults.standard.data(forKey: categoryKey(id)), let value = try? JSONDecoder().decode(LaunchCategories.self, from: data) else { return LaunchCategories(groups: [LaunchGroup(name: "常用"), LaunchGroup(name: "工作"), LaunchGroup(name: "开发"), LaunchGroup(name: "娱乐")]) }
+    guard let data = UserDefaults.standard.data(forKey: categoryKey(id)), let value = try? JSONDecoder().decode(LaunchCategories.self, from: data) else { return LaunchCategories(groups: [LaunchGroup(id: "default-frequent", name: "常用"), LaunchGroup(id: "default-work", name: "工作"), LaunchGroup(id: "default-development", name: "开发"), LaunchGroup(id: "default-entertainment", name: "娱乐")]) }
     return value
 }
 private func saveCategories(_ value: LaunchCategories, id: String) {
     if let data = try? JSONEncoder().encode(value) { UserDefaults.standard.set(data, forKey: categoryKey(id)) }
+    NotificationCenter.default.post(name: .init("WidgetifyCategoriesChanged"), object: id)
 }
 private func appTitle(_ string: String) -> String {
     guard let url = URL(string: string) else { return string }
@@ -46,7 +47,7 @@ private struct CategorySettings: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text("右键卡片，按分类启动应用").font(.system(size: 12, weight: .medium))
+                Text("点击卡片顶部的分类按钮，直接切换应用").font(.system(size: 12, weight: .medium))
                 HStack { TextField("新分类名称", text: $name).onSubmit(add); Button("添加", action: add).disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
                 ForEach(Array(data.groups.enumerated()), id: \.element.id) { index, group in
                     HStack {
@@ -68,7 +69,7 @@ private struct CategorySettings: View {
                         }.labelsHidden().frame(width: 105)
                     }
                 }
-                Text(notice.isEmpty ? "自动保存。删除分类不删除应用，原网格和原应用排序保持不变。" : notice).font(.system(size: 11)).foregroundColor(.secondary)
+                Text(notice.isEmpty ? "自动保存。删除分类不删除应用，应用选择和排序保持不变。" : notice).font(.system(size: 11)).foregroundColor(.secondary)
             }.font(.system(size: 12)).padding(16)
         }
     }
@@ -121,6 +122,185 @@ public func showCategoryMenu(_ identifier: UnsafeMutableRawPointer, _ windowPoin
     precondition(state.groups[0].apps.isEmpty && state.groups[1].apps.count == 1)
     let restored = try! JSONDecoder().decode(LaunchCategories.self, from: JSONEncoder().encode(state))
     precondition(restored.groups[1].apps == state.groups[1].apps)
+    let ordered = ["file:///Applications/Other.app", "file:///Applications/Example.app"]
+    precondition(filteredApps(ordered, categories: restored, selected: second) == [ordered[1]])
+    precondition(filteredApps(ordered, categories: restored, selected: unassignedLaunchApps) == [ordered[0]])
+    precondition(filteredApps(ordered, categories: restored, selected: allLaunchApps) == ordered)
+    precondition(filteredApps(ordered, categories: restored, selected: "deleted-category") == ordered)
+    precondition(filteredApps([ordered[0]], categories: restored, selected: second).isEmpty)
     state.assign("file:///Applications/Example.app", to: nil)
     precondition(state.groups.allSatisfy { $0.apps.isEmpty })
+}
+
+// The compiled host keeps ownership of its controller and settings callbacks.
+// A sibling presentation reads its ordered URL list; filtering never edits it.
+private let allLaunchApps = "__all__"
+private let unassignedLaunchApps = "__unassigned__"
+private func filteredApps(_ apps: [String], categories: LaunchCategories, selected: String) -> [String] {
+    if selected == allLaunchApps { return apps }
+    if selected == unassignedLaunchApps { return apps.filter { app in !categories.groups.contains { $0.apps.contains(app) } } }
+    guard let group = categories.groups.first(where: { $0.id == selected }) else { return apps }
+    return apps.filter { group.apps.contains($0) }
+}
+private final class InlineLaunchModel: ObservableObject {
+    let id: String
+    weak var window: NSWindow?
+    @Published var categories: LaunchCategories
+    @Published var apps: [String] = []
+    @Published var compact = true
+    @Published var selected: String
+    @Published var ink = NSColor.white
+    @Published var background = NSColor(calibratedWhite: 0.28, alpha: 0.86)
+    @Published var blur = true
+    @Published var fixed = false
+    @Published var backgroundImage: NSImage?
+    private var observer: NSObjectProtocol?
+    init(id: String, window: NSWindow) {
+        self.id = id; self.window = window; categories = loadCategories(id)
+        selected = UserDefaults.standard.string(forKey: "custom.component.\(id).launchSelection.v1") ?? allLaunchApps
+        observer = NotificationCenter.default.addObserver(forName: .init("WidgetifyCategoriesChanged"), object: nil, queue: .main) { [weak self] _ in self?.refresh(nil) }
+        refresh(nil)
+    }
+    deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+    var visibleApps: [String] { filteredApps(apps, categories: categories, selected: selected) }
+    var title: String { selected == allLaunchApps ? "全部应用" : selected == unassignedLaunchApps ? "未分类" : categories.groups.first { $0.id == selected }?.name ?? "全部应用" }
+    func select(_ value: String) {
+        selected = value
+        UserDefaults.standard.set(value, forKey: "custom.component.\(id).launchSelection.v1")
+    }
+    func refresh(_ theme: NSDictionary?) {
+        let next = loadCategories(id)
+        if next != categories { categories = next }
+        let ordered = UserDefaults.standard.stringArray(forKey: id) ?? []
+        if apps != ordered { apps = ordered }
+        let isCompact = UserDefaults.standard.object(forKey: id + "_compactIconsEnabled") as? Bool ?? false
+        if compact != isCompact { compact = isCompact }
+        if selected != allLaunchApps && selected != unassignedLaunchApps && !categories.groups.contains(where: { $0.id == selected }) { select(allLaunchApps) }
+        if let color = theme?["base"] as? NSColor, !ink.isEqual(color) { ink = color }
+        if let color = theme?["background"] as? NSColor, !background.isEqual(color) { background = color }
+        if let value = theme?["blur"] as? Bool, blur != value { blur = value }
+        if let value = theme?["fixed"] as? Bool, fixed != value { fixed = value }
+        if let theme {
+            let image = theme["backgroundImage"] as? NSImage
+            if backgroundImage !== image { backgroundImage = image }
+        }
+    }
+    func open(_ value: String) {
+        guard apps.contains(value), let url = URL(string: value), url.isFileURL, url.pathExtension == "app" else { return }
+        NSWorkspace.shared.open(url)
+    }
+    func settings() { if let window { _ = invokeOriginalSettings(window.contentView) } }
+}
+private final class LaunchDragView: NSView {
+    var fixed = false
+    override func mouseDown(with event: NSEvent) { if !fixed { window?.performDrag(with: event) } }
+}
+private struct LaunchDragHandle: NSViewRepresentable {
+    let fixed: Bool
+    func makeNSView(context: Context) -> LaunchDragView { LaunchDragView() }
+    func updateNSView(_ view: LaunchDragView, context: Context) { view.fixed = fixed }
+}
+private struct LaunchMaterial: NSViewRepresentable {
+    let enabled: Bool
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView(); view.material = .hudWindow; view.blendingMode = .behindWindow
+        return view
+    }
+    func updateNSView(_ view: NSVisualEffectView, context: Context) { view.state = enabled ? .active : .inactive; view.isHidden = !enabled }
+}
+private struct LaunchIcon: View {
+    let url: String
+    let compact: Bool
+    @State private var hovered = false
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: URL(string: url)?.path ?? ""))
+                    .resizable().interpolation(.high).frame(width: compact ? 32 : 42, height: compact ? 32 : 42)
+                    .scaleEffect(hovered ? 1.08 : 1)
+                if !compact { Text(appTitle(url)).font(.system(size: 10)).lineLimit(1).frame(maxWidth: .infinity) }
+            }.frame(maxWidth: .infinity).frame(height: compact ? 38 : 64).contentShape(Rectangle())
+        }.buttonStyle(.plain).help(appTitle(url)).accessibilityLabel("启动\(appTitle(url))")
+            .onHover { hovered = $0 }.animation(.easeOut(duration: 0.15), value: hovered)
+    }
+}
+private struct InlineLaunchCard: View {
+    @ObservedObject var model: InlineLaunchModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var ink: Color { Color(nsColor: model.ink) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Menu {
+                    categoryButton("全部应用", allLaunchApps)
+                    Divider()
+                    ForEach(model.categories.groups) { group in categoryButton(group.name, group.id) }
+                    categoryButton("未分类", unassignedLaunchApps)
+                    Divider()
+                    Button("管理分类…") { model.settings() }
+                } label: {
+                    HStack(spacing: 6) { Image(systemName: "square.grid.2x2"); Text(model.title).lineLimit(1); Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)) }
+                        .font(.system(size: 11, weight: .medium)).padding(.horizontal, 10).frame(height: 26)
+                        .background(ink.opacity(0.09), in: Capsule())
+                }.menuStyle(.borderlessButton).fixedSize().accessibilityLabel("切换应用分类：\(model.title)")
+                LaunchDragHandle(fixed: model.fixed).frame(maxWidth: .infinity).frame(height: 26).accessibilityHidden(true)
+                Text("\(model.visibleApps.count)").font(.system(size: 10)).monospacedDigit().foregroundColor(ink.opacity(0.5)).accessibilityLabel("\(model.visibleApps.count) 个应用")
+                Button { model.settings() } label: { Image(systemName: "slider.horizontal.3").font(.system(size: 12)).frame(width: 26, height: 26).background(ink.opacity(0.07), in: Circle()) }
+                    .buttonStyle(.plain).help("组件设置与分类").accessibilityLabel("组件设置与分类")
+            }
+            if model.visibleApps.isEmpty {
+                VStack(spacing: 7) {
+                    Image(systemName: "square.grid.2x2").font(.system(size: 21, weight: .light)).foregroundColor(ink.opacity(0.32))
+                    Text(model.apps.isEmpty ? "添加常用应用" : "这个分类还没有应用").font(.system(size: 11)).foregroundColor(ink.opacity(0.65))
+                    Button("设置分类") { model.settings() }.font(.system(size: 10)).buttonStyle(.plain).foregroundColor(ink.opacity(0.85))
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: model.compact ? 32 : 58), spacing: model.compact ? 14 : 9)], spacing: 8) {
+                        ForEach(model.visibleApps, id: \.self) { value in LaunchIcon(url: value, compact: model.compact) { model.open(value) } }
+                    }.padding(.top, 1).padding(.bottom, 3)
+                }
+            }
+        }.padding(.horizontal, 18).padding(.vertical, 12)
+            .foregroundColor(ink).frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background {
+                if let image = model.backgroundImage {
+                    GeometryReader { geometry in Image(nsImage: image).resizable().scaledToFill().frame(width: geometry.size.width, height: geometry.size.height).clipped() }
+                }
+            }
+            .background(Color(nsColor: model.background)).background(LaunchMaterial(enabled: model.blur))
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: model.selected)
+    }
+    func categoryButton(_ title: String, _ id: String) -> some View {
+        Button { model.select(id) } label: { if model.selected == id { Label(title, systemImage: "checkmark") } else { Text(title) } }
+    }
+}
+private final class InlineLaunchContainer: NSView {
+    let source: NSView
+    let model: InlineLaunchModel
+    let presentation: NSHostingView<InlineLaunchCard>
+    init(source: NSView, id: String, window: NSWindow, theme: NSDictionary) {
+        self.source = source; model = InlineLaunchModel(id: id, window: window)
+        model.refresh(theme); presentation = NSHostingView(rootView: InlineLaunchCard(model: model))
+        super.init(frame: source.frame)
+        // Keep the native hosting view and controller alive, at the same bounds,
+        // for native settings, app picking, size/lock/pin and persistence.
+        source.alphaValue = 0
+        addSubview(source); addSubview(presentation)
+        autoresizingMask = [.width, .height]
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func layout() { super.layout(); source.frame = bounds; presentation.frame = bounds }
+}
+@_cdecl("WidgetifyUpdateInlineShortcuts")
+public func updateInlineShortcuts(_ windowPointer: UnsafeMutableRawPointer, _ contextPointer: UnsafeMutableRawPointer) {
+    let window = Unmanaged<NSWindow>.fromOpaque(windowPointer).takeUnretainedValue()
+    let theme = Unmanaged<NSDictionary>.fromOpaque(contextPointer).takeUnretainedValue()
+    guard let id = theme["id"] as? String, let source = window.contentView else { return }
+    if let container = source as? InlineLaunchContainer { container.model.refresh(theme); return }
+    let container = InlineLaunchContainer(source: source, id: id, window: window, theme: theme)
+    window.contentView = container
+    container.needsLayout = true; container.layoutSubtreeIfNeeded()
 }

@@ -55,6 +55,7 @@ private func hosting(_ view: NSView) -> NSView? {
         if let model = field(root, "widget"), let id = field(model, "id") as? String,
            id.range(of: "^[a-f0-9]{32}$", options: .regularExpression) != nil {
             var result: [String: Any] = ["id": id, "kind": kind]
+            if let fixed = field(model, "isFixed") as? Bool { result["fixed"] = fixed }
             var budget = 100
             let controller = view.window.flatMap { unwrap(field($0, "currentDisplayController")) } ?? reflectedController(root, budget: &budget)
             if let controller {
@@ -63,6 +64,8 @@ private func hosting(_ view: NSView) -> NSView? {
                 }
                 if let blur: Bool = scalar(field(controller, "_backgroundBlurEnabled"), as: Bool.self) { result["blur"] = blur }
                 if let dark: Bool = scalar(field(controller, "_isDarkMode"), as: Bool.self) { result["dark"] = dark }
+                if let image: NSImage = scalar(field(controller, "_cachedBackgroundImage"), as: NSImage.self) { result["backgroundImage"] = image }
+                else if let data: Data = scalar(field(controller, "_backgroundImageData"), as: Data.self), let image = NSImage(data: data) { result["backgroundImage"] = image }
             }
             return Unmanaged.passRetained(result as NSDictionary).toOpaque()
         }

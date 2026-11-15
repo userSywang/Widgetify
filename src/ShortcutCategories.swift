@@ -189,15 +189,6 @@ private final class InlineLaunchModel: ObservableObject {
     }
     func settings() { if let window { _ = invokeOriginalSettings(window.contentView) } }
 }
-private final class LaunchDragView: NSView {
-    var fixed = false
-    override func mouseDown(with event: NSEvent) { if !fixed { window?.performDrag(with: event) } }
-}
-private struct LaunchDragHandle: NSViewRepresentable {
-    let fixed: Bool
-    func makeNSView(context: Context) -> LaunchDragView { LaunchDragView() }
-    func updateNSView(_ view: LaunchDragView, context: Context) { view.fixed = fixed }
-}
 // Adapted from the verified native press/material behavior. Layout values for
 // the new header remain preview parameters, not recovered vendor defaults.
 private struct ShortcutActionStyle: ButtonStyle {
@@ -253,7 +244,7 @@ private struct InlineLaunchCard: View {
                 } label: {
                     Text(model.title).font(.system(size: 13)).lineLimit(1)
                 }.menuStyle(.borderlessButton).frame(width: model.categoryWidth, alignment: .leading).help(model.title).accessibilityLabel("切换应用分类：\(model.title)")
-                LaunchDragHandle(fixed: model.fixed).frame(maxWidth: .infinity).frame(height: 26).accessibilityHidden(true)
+                WidgetDragHandle(fixed: model.fixed).frame(maxWidth: .infinity).frame(height: 26).accessibilityHidden(true)
                 Button("管理") { model.settings() }.buttonStyle(ShortcutActionStyle()).fixedSize().help("组件设置与分类").accessibilityLabel("组件设置与分类")
             }
             if model.visibleApps.isEmpty {

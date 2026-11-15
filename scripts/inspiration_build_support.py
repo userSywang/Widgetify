@@ -17,12 +17,12 @@ def bundle_git(app, output, executable, source):
     entitlement.write_bytes(plistlib.dumps({'com.apple.security.app-sandbox':True,'com.apple.security.inherit':True}))
     return helper,entitlement
 
-def integration_seed(version):
+def integration_seed(version, comparisons=False):
     widgets=[]
     for n,(kind,x,y,w,h,current,sizes) in enumerate([
         ('shortcuts',430,490,344,179.5,'medium',['small','medium','large']),
         ('translator',430,100,344,359,'large',['large','xlargeOfVertical']),
         ('water',800,300,164,179.5,'small',['small','large']),
-    ]):
+    ] if comparisons else []):
         widgets.append({'id':('%02x'%(225+n))*16,'name':'widget_name_'+kind,'brief':'widget_brief_'+kind,'type':{kind:{}},'needPro':kind!='shortcuts','size':[{s:{}} for s in sizes],'currentSize':{current:{}},'screenID':'00000000-0000-0000-0000-000000000000','screenFrame':[[0,0],[1920,1080]],'winFrame':[[x,y],[w,h]],'isFixed':False,'isPined':False})
     return {'revision':'formal-inspiration-integration-v1','preferences':{'userDidAddWidgets':True,'WWant_isGuideShowed':True,'initShortcutHasSet':True,'hoverFocus':False,'lastAcknowledgedReleaseNotesVersion':version,'appVersion':version},'layoutData':json.dumps(widgets).encode()}

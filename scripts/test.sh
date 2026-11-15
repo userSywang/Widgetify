@@ -24,3 +24,6 @@ xcrun swiftc -target arm64-apple-macos12.0 -parse-as-library \
   "$PROJECT_ROOT/src/InspirationIntegration.swift" "$PROJECT_ROOT/tests/InspirationIntegrationTests.swift" -o "$TEST_DIR/check-inspiration-integration"
 "$TEST_DIR/check-inspiration-integration"
 python3 "$PROJECT_ROOT/tests/test_inspiration_migration.py"
+xcrun swiftc -target arm64-apple-macos12.0 -parse-as-library \
+  "$PROJECT_ROOT/src/WidgetContext.swift" "$PROJECT_ROOT/tests/WidgetDraggingTests.swift" -o "$TEST_DIR/check-widget-dragging"
+"$TEST_DIR/check-widget-dragging"

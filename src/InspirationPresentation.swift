@@ -122,6 +122,8 @@ final class InspirationStore: ObservableObject {
     func clearMessage() { if !readOnly { message = "" } }
 }
 
+private let inspirationPositionKey = "custom.inspiration.position.v1"
+
 private struct InspirationRoute: Identifiable {
     enum Kind { case capture, expand(String), settings, history }
     let kind: Kind
@@ -132,6 +134,7 @@ private final class InspirationModel: ObservableObject {
     weak var window: NSWindow?
     @Published var ink = NSColor.white
     @Published var accent = NSColor.systemBlue
+    @Published var fixed = false
     @Published var route: InspirationRoute?
     @Published var historyBusy = false
     @Published var historyMessage = ""
@@ -183,6 +186,7 @@ private final class InspirationModel: ObservableObject {
         history = InspirationHistory(directory: directory.appendingPathComponent("LocalHistory", isDirectory: true))
     }
     func refresh(_ theme: NSDictionary) {
+        if let value = theme["fixed"] as? Bool, fixed != value { fixed = value }
         if let color = theme["base"] as? NSColor, !ink.isEqual(color) { ink = color }
         if let color = theme["accent"] as? NSColor, !accent.isEqual(color) { accent = color }
     }
@@ -340,10 +344,10 @@ private struct InspirationCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
-                Text("灵感").font(.system(size: 17, weight: .semibold))
+                Text("灵感").font(.system(size: 17, weight: .semibold)).background(WidgetDragHandle(fixed: model.fixed, positionKey: inspirationPositionKey).accessibilityHidden(true)).help("拖动以移动组件")
                 Menu { ForEach(["回顾", "全部灵感", "已归档"], id: \.self) { value in Button(value) { mode = value } } } label: { Text(mode).font(.system(size: 14)) }
                     .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("灵感视图")
-                Spacer(minLength: 0)
+                WidgetDragHandle(fixed: model.fixed, positionKey: inspirationPositionKey).frame(maxWidth: .infinity).frame(height: 28).accessibilityHidden(true).help("拖动以移动组件")
                 Button("记一条") { model.route = .init(kind: .capture) }.buttonStyle(InspirationActionStyle()).fixedSize().disabled(store.readOnly)
                 Menu {
                     if let entry = store.current { Button("归档这条灵感") { _ = store.archive(entry.id) } }
@@ -437,7 +441,7 @@ private final class InspirationAttachment: NSObject {
     init(source: NSView, surface: NSView, window: NSWindow, theme: NSDictionary) {
         self.source = source; self.surface = surface; model = InspirationModel(window: window); model.refresh(theme)
         presentation = InspirationHostingView(rootView: InspirationCard(model: model, store: model.store))
-        super.init(); presentation.frame = surface.bounds; presentation.autoresizingMask = [.width, .height]
+        super.init(); restoreWidgetPosition(window, key: inspirationPositionKey); presentation.frame = surface.bounds; presentation.autoresizingMask = [.width, .height]
         surface.addSubview(presentation, positioned: .above, relativeTo: nil); hideNativeWidgetScrolls(source, excluding: presentation)
     }
     func refresh(_ theme: NSDictionary) {

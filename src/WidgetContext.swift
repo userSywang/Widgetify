@@ -94,3 +94,75 @@ func hideNativeWidgetScrolls(_ view: NSView, excluding presentation: NSView) {
     if view is NSScrollView { view.alphaValue = 0; view.isHidden = true; view.setAccessibilityHidden(true); return }
     for child in view.subviews { hideNativeWidgetScrolls(child, excluding: presentation) }
 }
+
+// Native controls retain their own events. Inspiration uses window-level tracking
+// because its SwiftUI host and the vendor's desktop window suppress native drags.
+final class WidgetDragView: NSView {
+    var fixed = false
+    var positionKey: String? { didSet { if oldValue != positionKey { installMonitor() } } }
+    var positionDefaults = UserDefaults.standard
+    private var monitor: Any?
+    private var start: (pointer: NSPoint, origin: NSPoint)?
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); installMonitor() }
+    private func installMonitor() {
+        if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
+        guard window != nil, positionKey != nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+            guard let self, let window = self.window else { return event }
+            // Once started, keep tracking even when AppKit associates the
+            // drag/up event with a different window or with no window.
+            guard event.type == .leftMouseDown ? event.window === window : self.start != nil else { return event }
+            return self.track(event, pointer: NSEvent.mouseLocation)
+        }
+    }
+    // Separated from event delivery so locked, outside-region and persistence
+    // behavior can be tested without synthesizing desktop input.
+    func track(_ event: NSEvent, pointer: NSPoint) -> NSEvent? {
+        guard let window, window.isVisible, !isHiddenOrHasHiddenAncestor, positionKey != nil else { return event }
+        if Bundle.main.object(forInfoDictionaryKey: "WidgetifyIntegrationTest") as? Bool == true && [.leftMouseDown, .leftMouseUp].contains(event.type) {
+            let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("inspiration-drag-diagnostics.json")
+            var trace = (try? Data(contentsOf: file)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] } ?? []
+            trace.append(["event": event.type.rawValue, "inside": bounds.contains(convert(event.locationInWindow, from: nil)), "fixed": fixed, "nativeMovable": window.isMovable, "tracking": start != nil, "origin": [window.frame.origin.x, window.frame.origin.y]])
+            if let data = try? JSONSerialization.data(withJSONObject: Array(trace.suffix(12))) { try? data.write(to: file, options: .atomic) }
+        }
+        if fixed { start = nil; return event }
+        switch event.type {
+        case .leftMouseDown:
+            start = nil
+            guard !event.modifierFlags.contains(.control), bounds.contains(convert(event.locationInWindow, from: nil)) else { return event }
+            start = (pointer, window.frame.origin)
+            return nil
+        case .leftMouseDragged:
+            guard let start else { return event }
+            window.setFrameOrigin(NSPoint(x: start.origin.x + pointer.x - start.pointer.x, y: start.origin.y + pointer.y - start.pointer.y))
+            return nil
+        case .leftMouseUp:
+            guard start != nil, let positionKey else { return event }
+            start = nil
+            positionDefaults.set(["x": window.frame.origin.x, "y": window.frame.origin.y], forKey: positionKey)
+            positionDefaults.synchronize()
+            return nil
+        default: return event
+        }
+    }
+    override func mouseDown(with event: NSEvent) {
+        if positionKey == nil && !fixed { window?.performDrag(with: event) }
+    }
+    deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
+}
+struct WidgetDragHandle: NSViewRepresentable {
+    let fixed: Bool
+    var positionKey: String? = nil
+    func makeNSView(context: Context) -> WidgetDragView { WidgetDragView() }
+    func updateNSView(_ view: WidgetDragView, context: Context) { view.fixed = fixed; view.positionKey = positionKey }
+}
+func restoreWidgetPosition(_ window: NSWindow, key: String, defaults: UserDefaults = .standard) {
+    guard let stored = defaults.dictionary(forKey: key), let x = stored["x"] as? Double, let y = stored["y"] as? Double, x.isFinite, y.isFinite else { return }
+    var origin = NSPoint(x: x, y: y)
+    let proposed = NSRect(origin: origin, size: window.frame.size)
+    if !NSScreen.screens.contains(where: { $0.visibleFrame.intersects(proposed) }), let screen = NSScreen.main {
+        origin.x = min(max(origin.x, screen.visibleFrame.minX), max(screen.visibleFrame.minX, screen.visibleFrame.maxX - window.frame.width))
+        origin.y = min(max(origin.y, screen.visibleFrame.minY), max(screen.visibleFrame.minY, screen.visibleFrame.maxY - window.frame.height))
+    }
+    window.setFrameOrigin(origin)
+}

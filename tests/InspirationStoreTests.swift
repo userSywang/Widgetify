@@ -75,6 +75,23 @@ import Foundation
         do { _ = try InspirationHistory(directory: unrelated).save([]); preconditionFailure("Must not adopt unrelated data") } catch {}
         precondition(!fm.fileExists(atPath: unrelated.appendingPathComponent(".git").path))
         do { _ = try history.text(at: "HEAD:other"); preconditionFailure("Must reject revision injection") } catch {}
+        let deletionDirectory = fixture.appendingPathComponent("deletions")
+        let deletions = InspirationStore(directory: deletionDirectory, seed: durable.entries)
+        let chosen = deletions.active.last!
+        precondition(deletions.select(chosen.id) && deletions.current?.id == chosen.id)
+        let other = deletions.active.first { $0.id != chosen.id }!
+        precondition(deletions.delete(other.id) && deletions.current?.id == chosen.id)
+        precondition(deletions.deleted.count == 1 && !deletions.active.contains { $0.id == other.id })
+        let reopened = InspirationStore(directory: deletionDirectory, seed: [])
+        precondition(reopened.deleted.first?.text == other.text)
+        reopened.restoreDeleted(other.id)
+        precondition(reopened.deleted.isEmpty && reopened.entries.first { $0.id == other.id }?.additions == other.additions)
+        precondition(!reopened.select("missing-id") && reopened.current?.id == other.id)
+        let preservedRecords = reopened.entries
+        try fm.moveItem(at: deletionDirectory, to: fixture.appendingPathComponent("deletions-safe"))
+        try Data("blocked".utf8).write(to: deletionDirectory)
+        precondition(!reopened.delete(other.id) && reopened.entries == preservedRecords && reopened.deleted.isEmpty)
+        print("PASS: exact row selection, deletion preserves other selection, trash survives restart, restore retains additions")
         print("PASS: local Git snapshots, no duplicate commits, old snapshots preserved, no draft leak, no remote, unrelated folder protection")
         print("PASS: draft/restart, Unicode, capture, append preserves origin, archive/undo, failed writes, corrupt data protection")
     }

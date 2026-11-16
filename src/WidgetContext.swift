@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ObjectiveC
 
 // Read the supported host's reflected view/model metadata. Never write Swift
 // object memory or depend on field offsets or desktop window coordinates.
@@ -95,42 +96,77 @@ func hideNativeWidgetScrolls(_ view: NSView, excluding presentation: NSView) {
     for child in view.subviews { hideNativeWidgetScrolls(child, excluding: presentation) }
 }
 
-// Native controls retain their own events. Inspiration uses window-level tracking
-// because its SwiftUI host and the vendor's desktop window suppress native drags.
+// One event owner per window. Independent region monitors can swallow an up or
+// cancellation before a different region sees it, leaving a stale drag active.
+private var dragCoordinatorKey: UInt8 = 0
+final class WidgetDragCoordinator {
+    private weak var window: NSWindow?
+    private let regions = NSHashTable<WidgetDragView>.weakObjects()
+    private var owner: WidgetDragView?
+    private var monitor: Any?
+    init(window: NSWindow) {
+        self.window = window
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+            guard let self else { return event }
+            return self.dispatch(event, pointer: NSEvent.mouseLocation)
+        }
+    }
+    func register(_ region: WidgetDragView) { regions.add(region) }
+    func dispatch(_ event: NSEvent, pointer: NSPoint) -> NSEvent? {
+        guard let window else { return event }
+        if event.type == .leftMouseDown {
+            owner?.cancelDrag(); owner = nil
+            guard event.window == nil || event.window === window else { return event }
+            for region in regions.allObjects where region.window === window {
+                if region.track(event, pointer: pointer) == nil {
+                    owner = region
+                    return nil
+                }
+            }
+            return event
+        }
+        guard let owner else { return event }
+        let result = owner.track(event, pointer: pointer)
+        if event.type == .leftMouseUp { self.owner = nil }
+        return result
+    }
+    deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
+}
 final class WidgetDragView: NSView {
     var fixed = false
     var positionKey: String? { didSet { if oldValue != positionKey { installMonitor() } } }
     var positionDefaults = UserDefaults.standard
-    private var monitor: Any?
     private var start: (pointer: NSPoint, origin: NSPoint)?
-    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); installMonitor() }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); cancelDrag(); installMonitor() }
     private func installMonitor() {
-        if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
-        guard window != nil, positionKey != nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
-            guard let self, let window = self.window else { return event }
-            // Once started, keep tracking even when AppKit associates the
-            // drag/up event with a different window or with no window.
-            guard event.type == .leftMouseDown ? event.window === window : self.start != nil else { return event }
-            return self.track(event, pointer: NSEvent.mouseLocation)
+        guard let window, positionKey != nil else { return }
+        let coordinator: WidgetDragCoordinator
+        if let existing = objc_getAssociatedObject(window, &dragCoordinatorKey) as? WidgetDragCoordinator { coordinator = existing }
+        else {
+            coordinator = WidgetDragCoordinator(window: window)
+            objc_setAssociatedObject(window, &dragCoordinatorKey, coordinator, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
+        coordinator.register(self)
     }
+    func cancelDrag() { start = nil }
     // Separated from event delivery so locked, outside-region and persistence
     // behavior can be tested without synthesizing desktop input.
     func track(_ event: NSEvent, pointer: NSPoint) -> NSEvent? {
         guard let window, window.isVisible, !isHiddenOrHasHiddenAncestor, positionKey != nil else { return event }
+        let localDown = event.window === window ? convert(event.locationInWindow, from: nil) : convert(window.convertPoint(fromScreen: pointer), from: nil)
         if Bundle.main.object(forInfoDictionaryKey: "WidgetifyIntegrationTest") as? Bool == true && [.leftMouseDown, .leftMouseUp].contains(event.type) {
             let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("inspiration-drag-diagnostics.json")
             var trace = (try? Data(contentsOf: file)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] } ?? []
-            trace.append(["event": event.type.rawValue, "inside": bounds.contains(convert(event.locationInWindow, from: nil)), "fixed": fixed, "nativeMovable": window.isMovable, "tracking": start != nil, "origin": [window.frame.origin.x, window.frame.origin.y]])
+            trace.append(["event": event.type.rawValue, "inside": bounds.contains(localDown), "fixed": fixed, "nativeMovable": window.isMovable, "tracking": start != nil, "origin": [window.frame.origin.x, window.frame.origin.y]])
             if let data = try? JSONSerialization.data(withJSONObject: Array(trace.suffix(12))) { try? data.write(to: file, options: .atomic) }
         }
         if fixed { start = nil; return event }
         switch event.type {
         case .leftMouseDown:
             start = nil
-            guard !event.modifierFlags.contains(.control), bounds.contains(convert(event.locationInWindow, from: nil)) else { return event }
-            start = (pointer, window.frame.origin)
+            guard !event.modifierFlags.contains(.control), bounds.contains(localDown) else { return event }
+            let downPointer = event.window === window ? window.convertPoint(toScreen: event.locationInWindow) : pointer
+            start = (downPointer, window.frame.origin)
             return nil
         case .leftMouseDragged:
             guard let start else { return event }
@@ -145,10 +181,10 @@ final class WidgetDragView: NSView {
         default: return event
         }
     }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { positionKey != nil || super.acceptsFirstMouse(for: event) }
     override func mouseDown(with event: NSEvent) {
         if positionKey == nil && !fixed { window?.performDrag(with: event) }
     }
-    deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
 }
 struct WidgetDragHandle: NSViewRepresentable {
     let fixed: Bool

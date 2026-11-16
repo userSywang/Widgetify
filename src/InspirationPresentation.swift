@@ -15,6 +15,7 @@ struct InspirationEntry: Codable, Identifiable, Equatable {
     var createdAt = Date()
     var additions: [Addition] = []
     var archived = false
+    var deletedAt: Date? = nil
 }
 struct InspirationDraft: Codable, Equatable {
     var text = ""
@@ -41,8 +42,8 @@ final class InspirationStore: ObservableObject {
     private var lastArchivedID: String?
     private var undoAddedID: String?
     var current: InspirationEntry? { active.first { $0.id == selectedID } ?? active.first }
-    var active: [InspirationEntry] { entries.filter { !$0.archived }.sorted { $0.createdAt > $1.createdAt } }
-    var archived: [InspirationEntry] { entries.filter(\.archived).sorted { $0.createdAt > $1.createdAt } }
+    var active: [InspirationEntry] { entries.filter { !$0.archived && $0.deletedAt == nil }.sorted { $0.createdAt > $1.createdAt } }
+    var archived: [InspirationEntry] { entries.filter { $0.archived && $0.deletedAt == nil }.sorted { $0.createdAt > $1.createdAt } }
     init(directory: URL, seed: [InspirationEntry]) {
         file = directory.appendingPathComponent("ideas-v1.json")
         if FileManager.default.fileExists(atPath: file.path) {
@@ -95,7 +96,23 @@ final class InspirationStore: ObservableObject {
         guard commit(next, draft: draft, selected: id, supplements: supplements) else { return false }
         message = "已补充"; return true
     }
-    func select(_ id: String) { _ = commit(entries, draft: draft, selected: id) }
+    var deleted: [InspirationEntry] { entries.filter { $0.deletedAt != nil }.sorted { $0.deletedAt! > $1.deletedAt! } }
+    @discardableResult func select(_ id: String) -> Bool {
+        guard entries.contains(where: { $0.id == id && $0.deletedAt == nil }) else { return false }
+        return commit(entries, draft: draft, selected: id)
+    }
+    @discardableResult func delete(_ id: String) -> Bool {
+        guard let index = entries.firstIndex(where: { $0.id == id && $0.deletedAt == nil }) else { return false }
+        var next = entries; next[index].deletedAt = Date()
+        let nextSelection = selectedID == id ? active.first { $0.id != id }?.id : selectedID
+        guard commit(next, draft: draft, selected: nextSelection) else { return false }
+        message = "已移到最近删除，可恢复"; return true
+    }
+    func restoreDeleted(_ id: String) {
+        guard let index = entries.firstIndex(where: { $0.id == id && $0.deletedAt != nil }) else { return }
+        var next = entries; next[index].deletedAt = nil
+        if commit(next, draft: draft, selected: id) { message = "已恢复" }
+    }
     func next() {
         guard !active.isEmpty else { return }
         let index = active.firstIndex { $0.id == current?.id } ?? -1
@@ -345,12 +362,12 @@ private struct InspirationCard: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
                 Text("灵感").font(.system(size: 17, weight: .semibold)).background(WidgetDragHandle(fixed: model.fixed, positionKey: inspirationPositionKey).accessibilityHidden(true)).help("拖动以移动组件")
-                Menu { ForEach(["回顾", "全部灵感", "已归档"], id: \.self) { value in Button(value) { mode = value } } } label: { Text(mode).font(.system(size: 14)) }
+                Menu { ForEach(["回顾", "全部灵感", "已归档", "最近删除"], id: \.self) { value in Button(value) { mode = value } } } label: { Text(mode).font(.system(size: 14)) }
                     .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("灵感视图")
                 WidgetDragHandle(fixed: model.fixed, positionKey: inspirationPositionKey).frame(maxWidth: .infinity).frame(height: 28).accessibilityHidden(true).help("拖动以移动组件")
                 Button("记一条") { model.route = .init(kind: .capture) }.buttonStyle(InspirationActionStyle()).fixedSize().disabled(store.readOnly)
                 Menu {
-                    if let entry = store.current { Button("归档这条灵感") { _ = store.archive(entry.id) } }
+                    if mode == "回顾", let entry = store.current { Button("归档这条灵感") { _ = store.archive(entry.id) }; Button("删除这条灵感") { _ = store.delete(entry.id) } }
                     if store.canUndoArchive { Button("撤销上次归档") { store.undoArchive() } }
                     Button("查看已归档") { mode = "已归档" }
                     Divider()
@@ -380,7 +397,7 @@ private struct InspirationCard: View {
                     Button("展开思路") { model.route = .init(kind: .expand(entry.id)) }.buttonStyle(InspirationActionStyle(primary: true, accent: Color(nsColor: model.accent), fontSize: 16, horizontalPadding: 16, verticalPadding: 7))
                 }.padding(.top, 12)
             } else if mode != "回顾" {
-                list(mode == "已归档" ? store.archived : store.active, archived: mode == "已归档")
+                list(mode == "最近删除" ? store.deleted : (mode == "已归档" ? store.archived : store.active), archived: mode == "已归档", deleted: mode == "最近删除")
             } else {
                 VStack(spacing: 10) { Image(systemName: "lightbulb").font(.system(size: 25, weight: .light)); Text("先记下一条灵感").font(.system(size: 16, weight: .medium)); Text("一句没想完整的话也可以。").font(.system(size: 12)).foregroundColor(.secondary) }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -393,6 +410,10 @@ private struct InspirationCard: View {
                 }.font(.system(size: 10)).foregroundColor(ink.opacity(0.75)).padding(.top, 5)
             }
         }.padding(22).foregroundColor(ink).frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .top) { dragMargin.frame(height: 16) }
+            .overlay(alignment: .bottom) { dragMargin.frame(height: 16) }
+            .overlay(alignment: .leading) { dragMargin.frame(width: 14) }
+            .overlay(alignment: .trailing) { dragMargin.frame(width: 14) }
             .environment(\.colorScheme, model.dark ? .dark : .light)
             .onChange(of: store.message) { value in
                 if ["已存下", "已补充", "已归档", "已恢复"].contains(value) {
@@ -411,26 +432,43 @@ private struct InspirationCard: View {
                 }.environment(\.colorScheme, model.dark ? .dark : .light)
             }
     }
+    var dragMargin: some View {
+        WidgetDragHandle(fixed: model.fixed, positionKey: inspirationPositionKey).accessibilityHidden(true).help("拖动标题或空白边缘移动组件")
+    }
     func metadata(_ entry: InspirationEntry) -> String {
         let formatter = DateFormatter(); formatter.locale = Locale(identifier: "zh_CN"); formatter.dateFormat = "M月d日"
         return formatter.string(from: entry.createdAt) + (entry.tag.isEmpty ? "" : " · #" + entry.tag)
     }
-    func list(_ entries: [InspirationEntry], archived: Bool) -> some View {
+    func list(_ entries: [InspirationEntry], archived: Bool, deleted: Bool) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                if entries.isEmpty { Text(archived ? "还没有归档灵感" : "还没有灵感").font(.system(size: 13)).foregroundColor(.secondary).frame(maxWidth: .infinity, minHeight: 100) }
+                if entries.isEmpty { Text(deleted ? "最近删除为空" : (archived ? "还没有归档灵感" : "还没有灵感")).font(.system(size: 13)).foregroundColor(.secondary).frame(maxWidth: .infinity, minHeight: 100) }
                 ForEach(entries) { entry in
                     HStack(alignment: .top, spacing: 10) {
-                        Button { store.select(entry.id); mode = "回顾" } label: { VStack(alignment: .leading, spacing: 5) { Text(entry.text).font(.system(size: 13)).lineLimit(2); Text(metadata(entry)).font(.system(size: 11)).foregroundColor(.secondary) }.frame(maxWidth: .infinity, alignment: .leading) }.buttonStyle(.plain).disabled(archived)
-                        if archived { Button("恢复") { store.restore(entry.id) }.buttonStyle(.borderless).font(.system(size: 11)) }
+                        Button {
+                            _ = store.select(entry.id); model.route = .init(kind: .expand(entry.id))
+                        } label: {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(entry.text).font(.system(size: 13)).lineLimit(2)
+                                Text(metadata(entry)).font(.system(size: 11)).foregroundColor(.secondary)
+                            }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                        }.buttonStyle(.plain).disabled(deleted).accessibilityLabel("展开灵感：" + entry.text)
+                        if deleted {
+                            Button("恢复") { store.restoreDeleted(entry.id) }.buttonStyle(.borderless).font(.system(size: 11))
+                        } else {
+                            if archived { Button("恢复") { store.restore(entry.id) }.buttonStyle(.borderless).font(.system(size: 11)) }
+                            Button { _ = store.delete(entry.id) } label: { Image(systemName: "trash").font(.system(size: 12)).frame(width: 24, height: 24) }.buttonStyle(.plain).help("删除这条灵感，可在最近删除中恢复").accessibilityLabel("删除灵感：" + entry.text)
+                        }
                     }
                     Divider()
                 }
             }
         }
     }
+
 }
 private final class InspirationHostingView: NSHostingView<InspirationCard> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { super.hitTest(point) ?? (frame.contains(point) ? self : nil) }
 }
 private final class InspirationAttachment: NSObject {

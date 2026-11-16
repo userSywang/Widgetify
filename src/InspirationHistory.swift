@@ -58,7 +58,7 @@ final class InspirationHistory {
         _ = try git(["add", "--", ".inspiration-local-history", "records.json", "灵感.md"])
         let changes = try git(["diff", "--cached", "--name-only", "--", "records.json", "灵感.md"])
         guard !changes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        _ = try git(["commit", "--quiet", "-m", "保存灵感 · \(entries.filter { !$0.archived }.count) 条记录"])
+        _ = try git(["commit", "--quiet", "-m", "保存灵感 · \(entries.filter { !$0.archived && $0.deletedAt == nil }.count) 条记录"])
         return true
     }
     func revisions() throws -> [InspirationRevision] {
@@ -82,7 +82,7 @@ final class InspirationHistory {
             var result = "## " + String(entry.text.split(whereSeparator: \.isNewline).first ?? "灵感" ).prefix(70) + "\n\n"
             result += "记录时间：\(date.string(from: entry.createdAt))\n\n"
             if !entry.tag.isEmpty { result += "标签：#\(entry.tag)\n\n" }
-            result += "状态：\(entry.archived ? "已归档" : "未归档")\n\n\(entry.text)\n\n"
+            result += "状态：\(entry.deletedAt != nil ? "最近删除" : (entry.archived ? "已归档" : "未归档"))\n\n\(entry.text)\n\n"
             if !entry.context.isEmpty { result += "当时想到：\(entry.context)\n\n" }
             for addition in entry.additions { result += "### 补充 · \(date.string(from: addition.createdAt))\n\n\(addition.text)\n\n" }
             return result + "---\n\n"

@@ -16,7 +16,7 @@ import Foundation
         store.draft.text = "新增的零散想法"; store.draft.tag = "#设计"
         precondition(store.add())
         let created = store.current!
-        precondition(store.draft.text.isEmpty && created.tag == "设计")
+        precondition(store.draft.text.isEmpty && created.tag == "#设计")
         precondition(store.append("继续往下想", to: seed.id))
         precondition(store.current?.context == "最初的缘由" && store.current?.createdAt == seed.createdAt)
         precondition(store.current?.additions.count == 1 && store.supplementDrafts[seed.id] == nil)
@@ -93,6 +93,15 @@ import Foundation
         precondition(!reopened.delete(other.id) && reopened.entries == preservedRecords && reopened.deleted.isEmpty)
         print("PASS: exact row selection, deletion preserves other selection, trash survives restart, restore retains additions")
         print("PASS: local Git snapshots, no duplicate commits, old snapshots preserved, no draft leak, no remote, unrelated folder protection")
+        let categoryStore = InspirationStore(directory: fixture.appendingPathComponent("category-check"), seed: [])
+        categoryStore.draft.text = "分类与标签合并"
+        let categoryName = "自定义分类名称应完整保留而不是沿用旧标签的二十四字截断规则"
+        categoryStore.draft.tag = categoryName
+        precondition(categoryStore.add())
+        let categoryID = categoryStore.entries[0].id
+        precondition(categoryStore.entries[0].tag == categoryName)
+        precondition(categoryStore.append("补充时修改分类", to: categoryID, category: "职业生涯"))
+        precondition(categoryStore.entries[0].tag == "职业生涯")
         print("PASS: draft/restart, Unicode, capture, append preserves origin, archive/undo, failed writes, corrupt data protection")
     }
 }

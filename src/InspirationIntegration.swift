@@ -35,9 +35,66 @@ func inspirationLayout(_ data: Data?, screenID: String, screen: NSRect) throws -
     return try JSONSerialization.data(withJSONObject: widgets)
 }
 
+// Only recover an unambiguous single-display layout. Disconnected multi-display
+// layouts remain untouched so reconnecting a display preserves its arrangement.
+func recoveredScreenLayout(_ data: Data, screens: [(id: String, frame: CGRect)]) throws -> Data? {
+    guard let widgets = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { throw CocoaError(.fileReadCorruptFile) }
+    guard screens.count == 1, !widgets.isEmpty else { return nil }
+    let current = screens[0]
+    let ids = Set(widgets.compactMap { $0["screenID"] as? String })
+    guard ids.count == 1, let previous = ids.first, previous != current.id,
+          widgets.allSatisfy({ $0["screenID"] as? String == previous }) else { return nil }
+    var result = widgets
+    for i in result.indices {
+        guard let saved = result[i]["screenFrame"] as? [[Double]], saved.count == 2,
+              saved.allSatisfy({ $0.count == 2 && $0.allSatisfy({ $0.isFinite }) }),
+              let window = result[i]["winFrame"] as? [[Double]], window.count == 2,
+              window.allSatisfy({ $0.count == 2 && $0.allSatisfy({ $0.isFinite }) }) else { throw CocoaError(.fileReadCorruptFile) }
+        let oldFrame = CGRect(x: saved[0][0], y: saved[0][1], width: saved[1][0], height: saved[1][1])
+        guard oldFrame.width > 0, oldFrame.height > 0, window[1][0] > 0, window[1][1] > 0 else { throw CocoaError(.fileReadCorruptFile) }
+        result[i]["screenID"] = current.id
+        if oldFrame != current.frame {
+            let x = current.frame.minX + (window[0][0] - oldFrame.minX)
+            let y = current.frame.minY + (window[0][1] - oldFrame.minY)
+            result[i]["winFrame"] = [[min(max(x, current.frame.minX), max(current.frame.minX, current.frame.maxX - window[1][0])), min(max(y, current.frame.minY), max(current.frame.minY, current.frame.maxY - window[1][1]))], window[1]]
+            result[i]["screenFrame"] = [[current.frame.minX, current.frame.minY], [current.frame.width, current.frame.height]]
+        }
+    }
+    return try JSONSerialization.data(withJSONObject: result)
+}
+
+func recoverStartupScreenBinding() {
+    // Active displays only: no NSScreen/AppKit initialization during constructor.
+    var count: UInt32 = 0
+    guard CGGetActiveDisplayList(0, nil, &count) == .success, count == 1 else { return }
+    var display: CGDirectDisplayID = 0
+    guard CGGetActiveDisplayList(1, &display, &count) == .success, count == 1,
+          let uuid = CGDisplayCreateUUIDFromDisplayID(display) else { return }
+    let screenID = CFUUIDCreateString(nil, uuid.takeRetainedValue()) as String
+    let fm = FileManager.default
+    let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    let layout = support.appendingPathComponent("Widgetify/autosaved.widgetlist4")
+    guard fm.fileExists(atPath: layout.path) else { return }
+    do {
+        let original = try Data(contentsOf: layout)
+        guard let recovered = try recoveredScreenLayout(original, screens: [(screenID, CGDisplayBounds(display))]) else { return }
+        let directory = support.appendingPathComponent("Widgetify/ScreenRecovery", isDirectory: true)
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let backup = directory.appendingPathComponent("layout-before-" + UUID().uuidString + ".json")
+        try original.write(to: backup, options: .atomic)
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backup.path)
+        // Do not overwrite a concurrent layout edit made during preparation.
+        guard try Data(contentsOf: layout) == original else { return }
+        try recovered.write(to: layout, options: .atomic)
+    } catch {
+        NSLog("Widgetify: screen recovery skipped; original layout retained (%@)", String(describing: type(of: error)))
+    }
+}
+
 @_cdecl("WidgetifyBootstrapInspiration") public func bootstrapInspiration() {
     guard Bundle.main.object(forInfoDictionaryKey: "WidgetifyInspirationEnabled") as? Bool == true,
           Bundle.main.object(forInfoDictionaryKey: "WidgetifyStylePreview") as? Bool != true else { return }
+    recoverStartupScreenBinding()
     let defaults = UserDefaults.standard
     guard !defaults.bool(forKey: "custom.inspiration.bootstrap.v1") || defaults.bool(forKey: "custom.inspiration.addOnLaunch") else { return }
     let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]

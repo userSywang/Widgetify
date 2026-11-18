@@ -15,6 +15,27 @@ import AppKit
         let againValues = try JSONSerialization.jsonObject(with:again) as! NSArray
         precondition(againValues.isEqual(to:widgets))
         do { _=try inspirationLayout(Data("invalid".utf8),screenID:"test",screen:screen);preconditionFailure("Corrupt layout must be rejected") } catch {}
+        let saved: [[String: Any]] = [["id": "retained", "screenID": "old", "screenFrame": [[0,0],[1920,1080]], "winFrame": [[1560,690],[344,179.5]], "settings": ["keep": true]]]
+        let savedData = try JSONSerialization.data(withJSONObject: saved)
+        let recovered = try recoveredScreenLayout(savedData, screens: [("new", screen)])!
+        var expected = saved; expected[0]["screenID"] = "new"
+        let recoveredValues = try JSONSerialization.jsonObject(with: recovered) as! NSArray
+        precondition(recoveredValues.isEqual(to: expected))
+        let unchanged = try recoveredScreenLayout(recovered, screens: [("new", screen)])
+        precondition(unchanged == nil)
+        let missing = try recoveredScreenLayout(savedData, screens: [])
+        let multiple = try recoveredScreenLayout(savedData, screens: [("new",screen),("other",screen)])
+        precondition(missing == nil && multiple == nil)
+        var mixed = saved; var second = saved[0]; second["screenID"] = "other"; mixed.append(second)
+        let mixedData = try JSONSerialization.data(withJSONObject: mixed)
+        let disconnected = try recoveredScreenLayout(mixedData, screens: [("new",screen)])
+        precondition(disconnected == nil)
+        let smaller = try recoveredScreenLayout(savedData, screens: [("new", CGRect(x:0,y:0,width:1280,height:720))])!
+        let smallerWidgets = try JSONSerialization.jsonObject(with: smaller) as! [[String:Any]]
+        let smallerFrame = smallerWidgets[0]["winFrame"] as! [[Double]]
+        precondition(smallerFrame[0][0] == 936 && smallerFrame[0][1] == 540.5)
+        do { _ = try recoveredScreenLayout(Data("invalid".utf8), screens: [("new",screen)]); preconditionFailure() } catch {}
+        print("PASS: screen recovery preserves metadata, is idempotent, clamps resized displays and skips ambiguous/disconnected displays")
         let fresh=try inspirationLayout(nil,screenID:"test",screen:screen)
         let freshValues = try JSONSerialization.jsonObject(with:fresh) as! NSArray
         precondition(freshValues.count==1)
